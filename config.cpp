@@ -34,11 +34,15 @@ namespace FalseEdgeVR {
 	float shieldReequipCooldown = 0.5f;  // Cooldown after re-equip (500ms)
 	float shieldReequipDelay = 0.002f;           // Delay after activating weapon before equipping (2ms)
 	float shieldSwingVelocityThreshold = 150.0f; // Swing velocity threshold (units per second)
+	float shieldRadius = 15.0f;                // Shield face detection radius (units)
 
 	// Shield bash settings - defaults
 	int shieldBashThreshold = 3;   // Number of bashes required to trigger effect
 	float shieldBashWindow = 6.0f;// Time window (seconds) to register bashes
 	float shieldBashLockoutDuration = 240.0f;    // Lockout duration (seconds) after triggering effect (4 minutes)
+
+	// Equipment change grace period
+	int equipGraceFrames = 20;    // Frames to wait after equipment change before collision detection (~0.22 sec at 90fps)
 
 	void loadConfig() 
 	{
@@ -198,6 +202,10 @@ namespace FalseEdgeVR {
 						{
 							shieldSwingVelocityThreshold = std::stof(variableValueStr);
 						}
+						else if (variableName == "ShieldRadius")
+						{
+							shieldRadius = std::stof(variableValueStr);
+						}
 					}
 					else if (currentSection == "ShieldBash")
 					{
@@ -215,6 +223,16 @@ namespace FalseEdgeVR {
 						else if (variableName == "LockoutDuration")
 						{
 							shieldBashLockoutDuration = std::stof(variableValueStr);
+						}
+					}
+					else if (currentSection == "General")
+					{
+						std::string variableName;
+						std::string variableValueStr = GetConfigSettingsStringValue(line, variableName);
+
+						if (variableName == "EquipGraceFrames")
+						{
+							equipGraceFrames = std::stoi(variableValueStr);
 						}
 					}
 				} 
@@ -236,10 +254,11 @@ namespace FalseEdgeVR {
 				shieldCollisionThreshold, shieldImminentThreshold, shieldImminentThresholdBackup);
 			_MESSAGE("  ReequipThreshold=%.2f, CollisionTimeout=%.3f, TimeToCollisionThreshold=%.3f",
 				shieldReequipThreshold, shieldCollisionTimeout, shieldTimeToCollisionThreshold);
-			_MESSAGE("  ReequipCooldown=%.3f, ReequipDelay=%.4f, SwingVelocityThreshold=%.1f",
-				shieldReequipCooldown, shieldReequipDelay, shieldSwingVelocityThreshold);
+			_MESSAGE("  ReequipCooldown=%.3f, ReequipDelay=%.4f, SwingVelocityThreshold=%.1f, ShieldRadius=%.1f",
+				shieldReequipCooldown, shieldReequipDelay, shieldSwingVelocityThreshold, shieldRadius);
 			_MESSAGE("ShieldBash settings: BashThreshold=%d, BashWindow=%.1f, LockoutDuration=%.0f",
 				shieldBashThreshold, shieldBashWindow, shieldBashLockoutDuration);
+			_MESSAGE("General settings: EquipGraceFrames=%d", equipGraceFrames);
 			return;
 		}
 		return;

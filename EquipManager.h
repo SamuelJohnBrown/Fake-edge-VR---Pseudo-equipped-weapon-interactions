@@ -16,9 +16,8 @@ namespace FalseEdgeVR
         Dagger,
         Mace,
         Axe,
-        Greatsword,
-        Battleaxe,
         Shield
+        // Note: Two-handed weapons, bows, staffs are NOT tracked - they return None
     };
 
     // Represents an equipped item in a hand slot
@@ -91,7 +90,13 @@ namespace FalseEdgeVR
  // Initialize the equip manager and register event handlers
       void Initialize();
         
-        // Update equipment state from current player equipped items
+        // Flag to suppress weapon pickup sound during internal re-equip
+        static bool s_suppressPickupSound;
+        
+     // Flag to suppress weapon draw sound during internal collision re-equip
+        static bool s_suppressDrawSound;
+   
+     // Update equipment state from current player equipped items
         void UpdateEquipmentState();
         
         // Handle equip event

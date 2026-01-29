@@ -213,7 +213,7 @@ BladeImminentCallback m_imminentCallback = nullptr;
         int m_framesSinceEquipChange = 0;
         UInt32 m_lastLeftWeaponFormID = 0;
         UInt32 m_lastRightWeaponFormID = 0;
-static const int EQUIP_GRACE_FRAMES = 20;  // ~0.33 seconds at 90fps
+  // Note: equipGraceFrames is now configurable via INI (see config.h)
     };
     
     // Convenience function to initialize weapon geometry tracking

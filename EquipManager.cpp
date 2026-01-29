@@ -1,6 +1,7 @@
 #include "EquipManager.h"
 #include "VRInputHandler.h"
 #include "Engine.h"
+#include "SkyrimVRESLAPI.h"
 #include "skse64/GameData.h"
 #include "skse64/GameForms.h"
 #include "skse64/GameExtraData.h"
@@ -13,6 +14,10 @@
 namespace FalseEdgeVR
 {
     extern SKSETaskInterface* g_task;
+
+  // Static member initialization
+    bool EquipManager::s_suppressPickupSound = false;
+    bool EquipManager::s_suppressDrawSound = false;
 
     // ============================================
     // Delayed Equip Weapon Task (runs on game thread)
@@ -83,6 +88,28 @@ namespace FalseEdgeVR
     }
 
     // ============================================
+    // ContainerChangeEventHandler - Logs when weapons are added to player inventory
+    // ============================================
+    
+    class ContainerChangeEventHandler : public BSTEventSink<TESContainerChangedEvent>
+    {
+    public:
+   static ContainerChangeEventHandler* GetSingleton()
+        {
+     static ContainerChangeEventHandler instance;
+            return &instance;
+        }
+        
+        virtual EventResult ReceiveEvent(TESContainerChangedEvent* evn, EventDispatcher<TESContainerChangedEvent>* dispatcher) override;
+      
+    private:
+        ContainerChangeEventHandler() = default;
+      ~ContainerChangeEventHandler() = default;
+        ContainerChangeEventHandler(const ContainerChangeEventHandler&) = delete;
+ ContainerChangeEventHandler& operator=(const ContainerChangeEventHandler&) = delete;
+    };
+
+    // ============================================
     // EquipEventHandler Implementation
     // ============================================
     
@@ -97,24 +124,113 @@ namespace FalseEdgeVR
         if (!evn)
      return kEvent_Continue;
 
-    // Only track player equipment
-        Actor* actor = DYNAMIC_CAST(evn->actor, TESObjectREFR, Actor);
-        if (!actor || actor != *g_thePlayer)
-            return kEvent_Continue;
+    Actor* actor = DYNAMIC_CAST(evn->actor, TESObjectREFR, Actor);
+        if (!actor)
+     return kEvent_Continue;
 
         TESForm* item = LookupFormByID(evn->baseObject);
-  if (!item)
-            return kEvent_Continue;
+        if (!item)
+ return kEvent_Continue;
 
-        // Check if this is a weapon or shield
-      if (!EquipManager::IsWeapon(item) && !EquipManager::IsShield(item))
-   return kEvent_Continue;
+        // Check if this is a one-handed weapon we track
+        if (!EquipManager::IsWeapon(item))
+  {
+        // For player, also check shields
+    if (actor == *g_thePlayer && EquipManager::IsShield(item))
+            {
+          // Continue to player handling below
+}
+            else
+   {
+    return kEvent_Continue;
+            }
+    }
 
-        _MESSAGE("EquipEventHandler: Received equip event for FormID %08X, equipped=%d", evn->baseObject, evn->equipped);
-
-     // Determine which hand based on the equipped flag
         bool isEquipping = evn->equipped;
         
+        // ============================================
+        // NPC EQUIP TRACKING (within 1000 units of player)
+        // ============================================
+   if (actor != *g_thePlayer && isEquipping)
+        {
+     PlayerCharacter* player = *g_thePlayer;
+  if (player)
+    {
+    // Calculate distance to player
+       float dx = actor->pos.x - player->pos.x;
+       float dy = actor->pos.y - player->pos.y;
+      float dz = actor->pos.z - player->pos.z;
+       float distance = sqrt(dx*dx + dy*dy + dz*dz);
+          
+      // Only log and play sound if within 1000 units
+ if (distance <= 1000.0f)
+      {
+          WeaponType type = EquipManager::GetWeaponType(item);
+    const char* npcName = CALL_MEMBER_FN(actor, GetReferenceName)();
+           
+    // Cache sound FormIDs from Fake Edge VR.esp (ESL-flagged)
+             // Base FormIDs: Dagger=0x806, Sword=0x807, Axe=0x808, Mace=0x809
+       static UInt32 cachedDaggerSound = 0;
+static UInt32 cachedSwordSound = 0;
+            static UInt32 cachedAxeSound = 0;
+                static UInt32 cachedMaceSound = 0;
+     static bool soundsCached = false;
+                
+     if (!soundsCached)
+          {
+          cachedDaggerSound = GetFullFormIdFromEspAndFormId("Fake Edge VR.esp", 0x806);
+        cachedSwordSound = GetFullFormIdFromEspAndFormId("Fake Edge VR.esp", 0x807);
+        cachedAxeSound = GetFullFormIdFromEspAndFormId("Fake Edge VR.esp", 0x808);
+          cachedMaceSound = GetFullFormIdFromEspAndFormId("Fake Edge VR.esp", 0x809);
+        soundsCached = true;
+    _MESSAGE("EquipManager: Cached weapon draw sounds - Dagger:%08X, Sword:%08X, Axe:%08X, Mace:%08X",
+         cachedDaggerSound, cachedSwordSound, cachedAxeSound, cachedMaceSound);
+     }
+           
+  switch (type)
+           {
+    case WeaponType::Dagger:
+    _MESSAGE(">>> NPC EQUIPPED: DAGGER - NPC: %s (RefID: %08X), Distance: %.1f units, WeaponID: %08X",
+    npcName ? npcName : "Unknown", actor->formID, distance, item->formID);
+        if (cachedDaggerSound != 0)
+   PlaySoundAtActor(cachedDaggerSound, actor);
+   break;
+   case WeaponType::Sword:
+    _MESSAGE(">>> NPC EQUIPPED: 1H SWORD - NPC: %s (RefID: %08X), Distance: %.1f units, WeaponID: %08X",
+       npcName ? npcName : "Unknown", actor->formID, distance, item->formID);
+        if (cachedSwordSound != 0)
+       PlaySoundAtActor(cachedSwordSound, actor);
+   break;
+  case WeaponType::Mace:
+    _MESSAGE(">>> NPC EQUIPPED: 1H MACE - NPC: %s (RefID: %08X), Distance: %.1f units, WeaponID: %08X",
+  npcName ? npcName : "Unknown", actor->formID, distance, item->formID);
+   if (cachedMaceSound != 0)
+       PlaySoundAtActor(cachedMaceSound, actor);
+         break;
+case WeaponType::Axe:
+     _MESSAGE(">>> NPC EQUIPPED: 1H AXE - NPC: %s (RefID: %08X), Distance: %.1f units, WeaponID: %08X",
+        npcName ? npcName : "Unknown", actor->formID, distance, item->formID);
+        if (cachedAxeSound != 0)
+               PlaySoundAtActor(cachedAxeSound, actor);
+      break;
+ default:
+      break;
+     }
+  }
+ }
+     return kEvent_Continue;
+    }
+
+        // ============================================
+        // PLAYER EQUIP TRACKING (existing logic)
+     // ============================================
+        if (actor != *g_thePlayer)
+        return kEvent_Continue;
+
+     _MESSAGE("EquipEventHandler: Received equip event for FormID %08X, equipped=%d", evn->baseObject, evn->equipped);
+
+     // Determine which hand based on the equipped flag
+     
         // Get the actual hand from the currently equipped objects
      bool isLeftHand = false;
         TESForm* leftEquipped = actor->GetEquippedObject(true);
@@ -123,7 +239,7 @@ namespace FalseEdgeVR
       if (isEquipping)
 {
      if (leftEquipped && leftEquipped->formID == item->formID)
-          isLeftHand = true;
+   isLeftHand = true;
    else if (rightEquipped && rightEquipped->formID == item->formID)
          isLeftHand = false;
             
@@ -134,7 +250,7 @@ EquipManager::GetSingleton()->OnEquip(item, actor, isLeftHand);
  const PlayerEquipState& state = EquipManager::GetSingleton()->GetEquipState();
             if (state.leftHand.form && state.leftHand.form->formID == item->formID)
       isLeftHand = true;
-            else if (state.rightHand.form && state.rightHand.form->formID == item->formID)
+        else if (state.rightHand.form && state.rightHand.form->formID == item->formID)
    isLeftHand = false;
   
             EquipManager::GetSingleton()->OnUnequip(item, actor, isLeftHand);
@@ -217,19 +333,71 @@ EquipManager::GetSingleton()->OnEquip(item, actor, isLeftHand);
 
   WeaponType type = GetWeaponType(item);
         const char* typeName = GetWeaponTypeName(type);
-      const char* handName = isLeftHand ? "Left" : "Right";
+   const char* handName = isLeftHand ? "Left" : "Right";
 
     EquippedWeapon& hand = isLeftHand ? m_equipState.leftHand : m_equipState.rightHand;
-        hand.form = item;
+   hand.form = item;
         hand.type = type;
-     hand.isEquipped = true;
+ hand.isEquipped = true;
 
   _MESSAGE("EquipManager: EQUIPPED %s in %s hand (FormID: %08X)", typeName, handName, item->formID);
         
-      LogEquipmentState();
+// Cache sound FormIDs from Fake Edge VR.esp (ESL-flagged)
+      // Base FormIDs: Dagger=0x806, Sword=0x807, Axe=0x808, Mace=0x809
+  static UInt32 cachedDaggerSound = 0;
+        static UInt32 cachedSwordSound = 0;
+        static UInt32 cachedAxeSound = 0;
+        static UInt32 cachedMaceSound = 0;
+   static bool soundsCached = false;
         
+        if (!soundsCached)
+        {
+    cachedDaggerSound = GetFullFormIdFromEspAndFormId("Fake Edge VR.esp", 0x806);
+            cachedSwordSound = GetFullFormIdFromEspAndFormId("Fake Edge VR.esp", 0x807);
+            cachedAxeSound = GetFullFormIdFromEspAndFormId("Fake Edge VR.esp", 0x808);
+cachedMaceSound = GetFullFormIdFromEspAndFormId("Fake Edge VR.esp", 0x809);
+     soundsCached = true;
+        }
+        
+     // Log specific weapon types and play draw sounds (unless suppressed by collision logic)
+        switch (type)
+     {
+        case WeaponType::Dagger:
+      _MESSAGE(">>> PLAYER EQUIPPED: DAGGER (FormID: %08X) in %s hand", item->formID, handName);
+   if (!s_suppressDrawSound && cachedDaggerSound != 0)
+  PlaySoundAtPlayer(cachedDaggerSound);
+    break;
+     case WeaponType::Sword:
+       _MESSAGE(">>> PLAYER EQUIPPED: 1H SWORD (FormID: %08X) in %s hand", item->formID, handName);
+   if (!s_suppressDrawSound && cachedSwordSound != 0)
+    PlaySoundAtPlayer(cachedSwordSound);
+  break;
+     case WeaponType::Mace:
+    _MESSAGE(">>> PLAYER EQUIPPED: 1H MACE (FormID: %08X) in %s hand", item->formID, handName);
+     if (!s_suppressDrawSound && cachedMaceSound != 0)
+  PlaySoundAtPlayer(cachedMaceSound);
+     break;
+  case WeaponType::Axe:
+     _MESSAGE(">>> PLAYER EQUIPPED: 1H AXE (FormID: %08X) in %s hand", item->formID, handName);
+  if (!s_suppressDrawSound && cachedAxeSound != 0)
+      PlaySoundAtPlayer(cachedAxeSound);
+     break;
+  case WeaponType::Shield:
+ _MESSAGE(">>> PLAYER EQUIPPED: SHIELD (FormID: %08X) in %s hand", item->formID, handName);
+         break;
+            default:
+     break;
+  }
+ 
+        if (s_suppressDrawSound)
+        {
+        _MESSAGE("EquipManager: Skipping draw sound (internal collision re-equip)");
+        }
+        
+      LogEquipmentState();
+   
       // Update VR input handler grab listening
-        VRInputHandler::GetSingleton()->UpdateGrabListening();
+     VRInputHandler::GetSingleton()->UpdateGrabListening();
     }
 
     void EquipManager::OnUnequip(TESForm* item, Actor* actor, bool isLeftHand)
@@ -280,68 +448,104 @@ EquipManager::GetSingleton()->OnEquip(item, actor, isLeftHand);
     WeaponType EquipManager::GetWeaponType(TESForm* form)
     {
         if (!form)
-            return WeaponType::None;
+  return WeaponType::None;
 
-        if (IsShield(form))
-            return WeaponType::Shield;
+   if (IsShield(form))
+     return WeaponType::Shield;
 
-        TESObjectWEAP* weapon = DYNAMIC_CAST(form, TESForm, TESObjectWEAP);
+      TESObjectWEAP* weapon = DYNAMIC_CAST(form, TESForm, TESObjectWEAP);
         if (!weapon)
      return WeaponType::None;
 
-        switch (weapon->gameData.type)
+     switch (weapon->gameData.type)
         {
-            case TESObjectWEAP::GameData::kType_OneHandSword:
-          case TESObjectWEAP::GameData::kType_1HS:
-    return WeaponType::Sword;
-         
-  case TESObjectWEAP::GameData::kType_OneHandDagger:
- case TESObjectWEAP::GameData::kType_1HD:
-                return WeaponType::Dagger;
-   
-      case TESObjectWEAP::GameData::kType_OneHandMace:
-         case TESObjectWEAP::GameData::kType_1HM:
-    return WeaponType::Mace;
-            
-            case TESObjectWEAP::GameData::kType_OneHandAxe:
-    case TESObjectWEAP::GameData::kType_1HA:
-     return WeaponType::Axe;
-
-        case TESObjectWEAP::GameData::kType_TwoHandSword:
-     case TESObjectWEAP::GameData::kType_2HS:
-         return WeaponType::Greatsword;
-          
-            case TESObjectWEAP::GameData::kType_TwoHandAxe:
-     case TESObjectWEAP::GameData::kType_2HA:
-   return WeaponType::Battleaxe;
+ case TESObjectWEAP::GameData::kType_OneHandSword:
+        case TESObjectWEAP::GameData::kType_1HS:
+                return WeaponType::Sword;
      
- default:
-     return WeaponType::None;
-   }
+   case TESObjectWEAP::GameData::kType_OneHandDagger:
+      case TESObjectWEAP::GameData::kType_1HD:
+       return WeaponType::Dagger;
+  
+    case TESObjectWEAP::GameData::kType_OneHandMace:
+  case TESObjectWEAP::GameData::kType_1HM:
+             return WeaponType::Mace;
+            
+ case TESObjectWEAP::GameData::kType_OneHandAxe:
+            case TESObjectWEAP::GameData::kType_1HA:
+      return WeaponType::Axe;
+
+            // Two-handed weapons, bows, staffs - EXCLUDED from our tracking
+            case TESObjectWEAP::GameData::kType_TwoHandSword:
+            case TESObjectWEAP::GameData::kType_2HS:
+            case TESObjectWEAP::GameData::kType_TwoHandAxe:
+   case TESObjectWEAP::GameData::kType_2HA:
+     case TESObjectWEAP::GameData::kType_Bow:
+     case TESObjectWEAP::GameData::kType_Staff:
+            case TESObjectWEAP::GameData::kType_CrossBow:
+       return WeaponType::None;  // Treat as not a weapon for our purposes
+            
+            default:
+   return WeaponType::None;
+        }
     }
 
     const char* EquipManager::GetWeaponTypeName(WeaponType type)
     {
-     switch (type)
+   switch (type)
         {
-          case WeaponType::Sword:      return "Sword";
-          case WeaponType::Dagger:   return "Dagger";
+ case WeaponType::Sword:      return "Sword";
+   case WeaponType::Dagger:   return "Dagger";
             case WeaponType::Mace:       return "Mace";
-        case WeaponType::Axe:        return "Axe";
-          case WeaponType::Greatsword: return "Greatsword";
-        case WeaponType::Battleaxe:  return "Battleaxe";
-       case WeaponType::Shield:   return "Shield";
- case WeaponType::None:
-     default:        return "None";
+        case WeaponType::Axe:     return "Axe";
+       case WeaponType::Shield:     return "Shield";
+     case WeaponType::None:
+       default: return "None";
         }
     }
 
     bool EquipManager::IsWeapon(TESForm* form)
     {
         if (!form)
-            return false;
+  return false;
 
-     return form->formType == kFormType_Weapon;
+        if (form->formType != kFormType_Weapon)
+       return false;
+        
+        // Check if it's a weapon type we actually track (one-handed only)
+    // Exclude bows, staffs, crossbows, two-handed weapons, and bound weapons
+  TESObjectWEAP* weapon = DYNAMIC_CAST(form, TESForm, TESObjectWEAP);
+        if (!weapon)
+   return false;
+     
+        // Check for bound weapon keyword - exclude bound weapons
+        BGSKeywordForm* keywordForm = DYNAMIC_CAST(form, TESForm, BGSKeywordForm);
+        if (keywordForm)
+        {
+            // WeapTypeBoundWeapon keyword FormID is 0x0010D501 in Skyrim.esm
+        static const UInt32 kWeapTypeBoundWeapon = 0x0010D501;
+            BGSKeyword* boundKeyword = DYNAMIC_CAST(LookupFormByID(kWeapTypeBoundWeapon), TESForm, BGSKeyword);
+    if (boundKeyword && keywordForm->HasKeyword(boundKeyword))
+        {
+        return false;  // Bound weapon - don't track
+        }
+        }
+ 
+        switch (weapon->gameData.type)
+        {
+   case TESObjectWEAP::GameData::kType_OneHandSword:
+            case TESObjectWEAP::GameData::kType_1HS:
+      case TESObjectWEAP::GameData::kType_OneHandDagger:
+case TESObjectWEAP::GameData::kType_1HD:
+    case TESObjectWEAP::GameData::kType_OneHandMace:
+          case TESObjectWEAP::GameData::kType_1HM:
+   case TESObjectWEAP::GameData::kType_OneHandAxe:
+         case TESObjectWEAP::GameData::kType_1HA:
+      return true;  // One-handed weapons - we track these
+            
+            default:
+ return false;  // Bows, staffs, crossbows, two-handed - don't track
+   }
     }
 
     bool EquipManager::IsShield(TESForm* form)
@@ -447,7 +651,7 @@ TESObjectARMO* armor = DYNAMIC_CAST(form, TESForm, TESObjectARMO);
         }
 
         // Unequip the item (silent - no sound, no message)
-  CALL_MEMBER_FN(equipManager, UnequipItem)(player, item, equipList, 1, equipSlot, false, true, false, false, NULL);
+  CALL_MEMBER_FN(equipManager, UnequipItem)(player, item, equipList, 1, equipSlot, false, true, true, false, NULL);
 
     _MESSAGE("EquipManager: Force unequip command sent for %s hand (silent)", isLeftHand ? "Left" : "Right");
     }
@@ -687,7 +891,7 @@ BSExtraData* xCannotWear = equipList->GetByType(kExtraData_CannotWear);
     }
 
    // Unequip the item (silent - no sound, no message)
-        CALL_MEMBER_FN(equipManager, UnequipItem)(player, item, equipList, 1, equipSlot, false, true, false, false, NULL);
+        CALL_MEMBER_FN(equipManager, UnequipItem)(player, item, equipList, 1, equipSlot, false, true, true, false, NULL);
 
      _MESSAGE("EquipManager: Item unequipped (silent), now creating world object for HIGGS grab...");
 
@@ -726,14 +930,17 @@ else
    if (droppedWeapon)
      {
     _MESSAGE("EquipManager: Created world weapon reference (RefID: %08X)", droppedWeapon->formID);
- 
+
+ // Step 3.25: Set ownership to player to prevent "stolen" flag when picking up
+        SetOwnerToPlayer(droppedWeapon);
+
   // Step 3.5: Remove the item from inventory to prevent duplication
   // PlaceAtMe creates a COPY, so we need to remove the original from inventory
         // EXCEPTION: If both hands have the same weapon, don't remove - we need it for the other hand!
         if (!bothHandsSameWeapon)
         {
     RemoveItemFromInventory(player, item, 1, true);
-            _MESSAGE("EquipManager: Removed 1x item from inventory to prevent duplication");
+  _MESSAGE("EquipManager: Removed 1x item from inventory to prevent duplication");
         }
      else
    {
@@ -827,18 +1034,101 @@ else
     }
 
     // ============================================
+    // ContainerChangeEventHandler Implementation
+    // ============================================
+    
+    EventResult ContainerChangeEventHandler::ReceiveEvent(TESContainerChangedEvent* evn, EventDispatcher<TESContainerChangedEvent>* dispatcher)
+  {
+        if (!evn)
+  return kEvent_Continue;
+            
+     // Get the player's FormID
+   PlayerCharacter* player = *g_thePlayer;
+     if (!player)
+       return kEvent_Continue;
+        
+        UInt32 playerFormID = player->formID;
+        
+        // Check if item is being added TO the player (player is the destination)
+        if (evn->toFormId != playerFormID)
+           return kEvent_Continue;
+ 
+        // Look up the item form
+      TESForm* itemForm = LookupFormByID(evn->itemFormId);
+        if (!itemForm)
+     return kEvent_Continue;
+            
+   // Check if this is a valid one-handed weapon we track
+        if (!EquipManager::IsWeapon(itemForm))
+           return kEvent_Continue;
+        
+      // Get weapon name for logging
+        const char* weaponName = nullptr;
+     TESFullName* fullName = DYNAMIC_CAST(itemForm, TESForm, TESFullName);
+        if (fullName)
+  {
+ weaponName = fullName->GetName();
+        }
+        
+    // Get weapon type
+        WeaponType weaponType = EquipManager::GetWeaponType(itemForm);
+        const char* typeName = EquipManager::GetWeaponTypeName(weaponType);
+        
+        // Log the weapon being added
+ _MESSAGE("=== WEAPON ADDED TO PLAYER INVENTORY ===");
+        _MESSAGE("  Name: %s", weaponName ? weaponName : "Unknown");
+        _MESSAGE("  Type: %s", typeName);
+  _MESSAGE("  FormID: %08X", evn->itemFormId);
+        _MESSAGE("  Count: %d", evn->count);
+     _MESSAGE("  From: %08X", evn->fromFormId);
+    _MESSAGE("=========================================");
+        
+     // Play the weapon pickup sound from Fake Edge VR.esp (ESL-flagged)
+     // BUT skip if this is from our internal re-equip logic (SafeActivate)
+        if (EquipManager::s_suppressPickupSound)
+     {
+   _MESSAGE("EquipManager: Skipping pickup sound (internal re-equip)");
+          return kEvent_Continue;
+        }
+        
+  // Base FormID is 0x800, plugin name is "Fake Edge VR.esp"
+   static UInt32 cachedSoundFormId = 0;
+     if (cachedSoundFormId == 0)
+     {
+          cachedSoundFormId = GetFullFormIdFromEspAndFormId("Fake Edge VR.esp", 0x800);
+   if (cachedSoundFormId != 0)
+  {
+  _MESSAGE("EquipManager: Cached weapon pickup sound FormID: %08X", cachedSoundFormId);
+         }
+     else
+   {
+    _MESSAGE("EquipManager: WARNING - Could not find weapon pickup sound in Fake Edge VR.esp");
+   }
+}
+
+        PlaySoundAtPlayer(cachedSoundFormId);
+        
+ return kEvent_Continue;
+    }
+
+    // ============================================
     // Convenience Functions
     // ============================================
 
     void RegisterEquipEventHandler()
     {
-        _MESSAGE("EquipManager: Registering equip event handler...");
+        _MESSAGE("EquipManager: Registering event handlers...");
         
         auto* eventDispatcher = GetEventDispatcherList();
         if (eventDispatcher)
         {
-            eventDispatcher->unk4D0.AddEventSink(EquipEventHandler::GetSingleton());
+            // Register equip event handler
+          eventDispatcher->unk4D0.AddEventSink(EquipEventHandler::GetSingleton());
     _MESSAGE("EquipManager: Equip event handler registered successfully");
+            
+  // Register container change event handler
+   eventDispatcher->unk370.AddEventSink(ContainerChangeEventHandler::GetSingleton());
+            _MESSAGE("EquipManager: Container change event handler registered successfully");
         }
       else
         {
@@ -849,10 +1139,11 @@ else
     void UnregisterEquipEventHandler()
     {
         auto* eventDispatcher = GetEventDispatcherList();
-        if (eventDispatcher)
+   if (eventDispatcher)
         {
-            eventDispatcher->unk4D0.RemoveEventSink(EquipEventHandler::GetSingleton());
-            _MESSAGE("EquipManager: Equip event handler unregistered");
+     eventDispatcher->unk4D0.RemoveEventSink(EquipEventHandler::GetSingleton());
+            eventDispatcher->unk370.RemoveEventSink(ContainerChangeEventHandler::GetSingleton());
+      _MESSAGE("EquipManager: Event handlers unregistered");
  }
     }
 }

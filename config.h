@@ -44,7 +44,7 @@ namespace FalseEdgeVR {
 	extern float closeCombatEnterDistance;      // Distance to enemy at which close combat mode activates
 	extern float closeCombatExitDistance;       // Distance to enemy at which close combat mode deactivates (buffer)
 
-	// Shield collision settings (weapon vs shield)
+	// Shield collision settings
 	extern float shieldCollisionThreshold;       // Distance at which weapon is considered touching shield
 	extern float shieldImminentThreshold;        // Distance at which collision is imminent (triggers unequip)
 	extern float shieldImminentThresholdBackup;  // Backup threshold, larger safety net
@@ -54,11 +54,15 @@ namespace FalseEdgeVR {
 	extern float shieldReequipCooldown;    // Cooldown after re-equip before another unequip can trigger
 	extern float shieldReequipDelay;     // Delay after activating weapon before equipping
 	extern float shieldSwingVelocityThreshold;   // Swing velocity threshold for shield collision
+	extern float shieldRadius;     // Shield face detection radius
 
 	// Shield bash settings
 	extern int shieldBashThreshold;              // Number of bashes required to trigger effect
 	extern float shieldBashWindow;      // Time window (seconds) to register bashes
 	extern float shieldBashLockoutDuration;      // Lockout duration (seconds) after triggering effect
+
+	// Equipment change grace period
+	extern int equipGraceFrames;         // Frames to wait after equipment change before collision detection
 
 	void loadConfig();
 	

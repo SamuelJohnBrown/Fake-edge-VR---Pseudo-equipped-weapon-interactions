@@ -43,6 +43,22 @@ namespace FalseEdgeVR
 	void CastSpellOnPlayer(UInt32 formId);
 
 	// ============================================
+	// Sound Playing
+	// ============================================
+	
+	// Play a sound at the player's location
+	// soundFormId is the full FormID of the SOUN record
+	void PlaySoundAtPlayer(UInt32 soundFormId);
+
+	// Play a sound at any actor's location (NPC or player)
+	// soundFormId is the full FormID of the SOUN record
+	void PlaySoundAtActor(UInt32 soundFormId, Actor* actor);
+
+	// Set the ownership of an object reference to the player
+	// This prevents the item from being flagged as stolen when picked up
+	void SetOwnerToPlayer(TESObjectREFR* objRef);
+
+	// ============================================
 	// Blocking (X-Pose)
 	// ============================================
 	

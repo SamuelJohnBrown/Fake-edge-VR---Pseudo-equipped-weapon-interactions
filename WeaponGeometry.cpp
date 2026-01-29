@@ -2,6 +2,7 @@
 #include "Engine.h"
 #include "EquipManager.h"
 #include "VRInputHandler.h"
+#include "config.h"
 #include "skse64/GameRTTI.h"
 #include "skse64/NiNodes.h"
 #include <cmath>
@@ -83,7 +84,7 @@ loggedOnce = true;
         _MESSAGE("WeaponGeometryTracker: Equipment changed! Left: %08X->%08X, Right: %08X->%08X",
     m_lastLeftWeaponFormID, currentLeftFormID,
     m_lastRightWeaponFormID, currentRightFormID);
-     _MESSAGE("WeaponGeometryTracker: Starting %d frame grace period before collision detection", EQUIP_GRACE_FRAMES);
+     _MESSAGE("WeaponGeometryTracker: Starting %d frame grace period before collision detection", equipGraceFrames);
             
             m_lastLeftWeaponFormID = currentLeftFormID;
    m_lastRightWeaponFormID = currentRightFormID;
@@ -267,7 +268,7 @@ m_collisionCallback(collision);
     bool leftHandOnCooldown = VRInputHandler::GetSingleton()->IsHandOnCooldown(true);
      bool withinBackupOnly = (collision.closestDistance <= bladeImminentThresholdBackup) && 
            (collision.closestDistance > m_imminentThreshold);
-        bool inGracePeriod = (m_framesSinceEquipChange < EQUIP_GRACE_FRAMES);
+        bool inGracePeriod = (m_framesSinceEquipChange < equipGraceFrames);
       
         if (inGracePeriod)
    {
@@ -276,7 +277,7 @@ m_collisionCallback(collision);
             if (!loggedGracePeriod)
         {
         _MESSAGE("WeaponGeometryTracker: In grace period (%d/%d frames) - collision detection disabled",
-        m_framesSinceEquipChange, EQUIP_GRACE_FRAMES);
+        m_framesSinceEquipChange, equipGraceFrames);
       loggedGracePeriod = true;
  }
         }
@@ -501,7 +502,7 @@ bladeVector.y * bladeVector.y +
         // Log periodically to confirm tracking is working
         static int logCounter = 0;
 logCounter++;
-        if (logCounter % 500 == 1)  // Log every 500 frames
+        if (logCounter % 400 == 1)  // Log every 500 frames
         {
             _MESSAGE("HIGGS Grabbed Geometry Update - Base(%.1f, %.1f, %.1f) Tip(%.1f, %.1f, %.1f) Length: %.1f",
        geometry.basePosition.x, geometry.basePosition.y, geometry.basePosition.z,

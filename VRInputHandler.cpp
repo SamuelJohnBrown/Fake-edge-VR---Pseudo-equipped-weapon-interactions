@@ -298,7 +298,7 @@ if (handler->m_rightHandCooldownTimer >= shieldReequipCooldown)
    {
        m_closeCombatMode = false;
         _MESSAGE("VRInputHandler: === EXITED CLOSE COMBAT MODE ===");
-             _MESSAGE("VRInputHandler: Target distance: %.1f units (threshold: %.1f)", 
+             _MESSAGE("VRInputHandler:   Target distance: %.1f units (threshold: %.1f)", 
          m_closestTargetDistance, closeCombatExitDistance);
       _MESSAGE("VRInputHandler:   Collision avoidance RE-ENABLED");
    }
@@ -357,8 +357,11 @@ if (handler->m_rightHandCooldownTimer >= shieldReequipCooldown)
             if (grabbed == m_autoEquipWeaponLeft && grabbed->baseForm)
             {
                 _MESSAGE("VRInputHandler: Close combat - force equipping LEFT grabbed weapon");
-                
+       
+     // Suppress pickup sound during internal re-equip
+     EquipManager::s_suppressPickupSound = true;
                 bool activated = SafeActivate(grabbed, player, 0, 0, 1, true);
+                EquipManager::s_suppressPickupSound = false;
      if (activated)
     {
          bool isLeftGameHand = VRControllerToGameHand(true);
@@ -366,9 +369,12 @@ if (handler->m_rightHandCooldownTimer >= shieldReequipCooldown)
        if (equipMan)
             {
        BGSEquipSlot* slot = isLeftGameHand ? GetLeftHandSlot() : GetRightHandSlot();
-        CALL_MEMBER_FN(equipMan, EquipItem)(player, grabbed->baseForm, nullptr, 1, slot, false, true, false, nullptr);
-        _MESSAGE("VRInputHandler: Force equipped weapon to %s game hand", isLeftGameHand ? "LEFT" : "RIGHT");
-    }
+    // Suppress draw sound during collision re-equip
+         EquipManager::s_suppressDrawSound = true;
+      CALL_MEMBER_FN(equipMan, EquipItem)(player, grabbed->baseForm, nullptr, 1, slot, false, true, false, nullptr);
+       EquipManager::s_suppressDrawSound = false;
+       _MESSAGE("VRInputHandler: Force equipped weapon to %s game hand", isLeftGameHand ? "LEFT" : "RIGHT");
+          }
  }
          
               m_autoEquipPendingLeft = false;
@@ -385,7 +391,10 @@ if (handler->m_rightHandCooldownTimer >= shieldReequipCooldown)
        {
                 _MESSAGE("VRInputHandler: Close combat - force equipping RIGHT grabbed weapon");
           
-  bool activated = SafeActivate(grabbed, player, 0, 0, 1, true);
+  // Suppress pickup sound during internal re-equip
+     EquipManager::s_suppressPickupSound = true;
+   bool activated = SafeActivate(grabbed, player, 0, 0, 1, false);
+     EquipManager::s_suppressPickupSound = false;
         if (activated)
    {
  bool isLeftGameHand = VRControllerToGameHand(false);
@@ -393,7 +402,10 @@ if (handler->m_rightHandCooldownTimer >= shieldReequipCooldown)
     if (equipMan)
   {
       BGSEquipSlot* slot = isLeftGameHand ? GetLeftHandSlot() : GetRightHandSlot();
+      // Suppress draw sound during auto-equip
+   EquipManager::s_suppressDrawSound = true;
       CALL_MEMBER_FN(equipMan, EquipItem)(player, grabbed->baseForm, nullptr, 1, slot, false, true, false, nullptr);
+       EquipManager::s_suppressDrawSound = false;
                  _MESSAGE("VRInputHandler: Force equipped weapon to %s game hand", isLeftGameHand ? "LEFT" : "RIGHT");
           }
 }
@@ -413,12 +425,17 @@ if (leftDropped && higgsInterface)
  {
          _MESSAGE("VRInputHandler: Close combat - force equipping LEFT collision-avoidance weapon");
     
-                bool activated = SafeActivate(grabbed, player, 0, 0, 1, false);
+                // Suppress pickup sound during internal re-equip
+     EquipManager::s_suppressPickupSound = true;
+    bool activated = SafeActivate(grabbed, player, 0, 0, 1, false);
+    EquipManager::s_suppressPickupSound = false;
       if (activated)
            {
-    // Re-equip using cached FormID
+    // Re-equip using cached FormID (suppress draw sound)
+         EquipManager::s_suppressDrawSound = true;
      EquipManager::GetSingleton()->ForceReequipLeftHand();
-            }
+       EquipManager::s_suppressDrawSound = false;
+     }
     
  // Clear collision avoidance state
        EquipManager::GetSingleton()->ClearDroppedWeaponRef(true);
@@ -436,11 +453,16 @@ if (leftDropped && higgsInterface)
             {
     _MESSAGE("VRInputHandler: Close combat - force equipping RIGHT collision-avoidance weapon");
  
-     bool activated = SafeActivate(grabbed, player, 0, 0, 1, false);
+     // Suppress pickup sound during internal re-equip
+     EquipManager::s_suppressPickupSound = true;
+   bool activated = SafeActivate(grabbed, player, 0, 0, 1, false);
+     EquipManager::s_suppressPickupSound = false;
           if (activated)
     {
-    // Re-equip using cached FormID
+    // Re-equip using cached FormID (suppress draw sound)
+    EquipManager::s_suppressDrawSound = true;
   EquipManager::GetSingleton()->ForceReequipRightHand();
+        EquipManager::s_suppressDrawSound = false;
       }
          
                 // Clear collision avoidance state
@@ -1003,11 +1025,14 @@ m_timeSinceLastCollision, bladeCollisionTimeout);
    PlayerCharacter* player = *g_thePlayer;
     if (player)
      {
+     // Suppress pickup sound during internal re-equip
+         EquipManager::s_suppressPickupSound = true;
      bool activated = SafeActivate(droppedWeapon, player, 0, 0, 1, false);
-      _MESSAGE("VRInputHandler: Activate result: %s", activated ? "SUCCESS" : "FAILED");
+  EquipManager::s_suppressPickupSound = false;
+    _MESSAGE("VRInputHandler: Activate result: %s", activated ? "SUCCESS" : "FAILED");
    }
     }
-     else
+    else
     {
   _MESSAGE("VRInputHandler: WARNING - Dropped weapon ref became invalid before activation!");
  }
@@ -1042,17 +1067,23 @@ m_timeSinceLastCollision, bladeCollisionTimeout);
  
             if (m_pendingReequipIsLeft)
       {
+        // Suppress draw sound during collision re-equip
+        EquipManager::s_suppressDrawSound = true;
      EquipManager::GetSingleton()->ForceReequipLeftHand();
+         EquipManager::s_suppressDrawSound = false;
            m_leftHandOnCooldown = true;
-     m_leftHandCooldownTimer = 0.0f;
+m_leftHandCooldownTimer = 0.0f;
   _MESSAGE("VRInputHandler: Started %.0fms cooldown for left hand", bladeReequipCooldown * 1000.0f);
        }
        else
   {
+        // Suppress draw sound during shield collision re-equip
+        EquipManager::s_suppressDrawSound = true;
         EquipManager::GetSingleton()->ForceReequipRightHand();
+   EquipManager::s_suppressDrawSound = false;
  m_rightHandOnCooldown = true;
-               m_rightHandCooldownTimer = 0.0f;
-        _MESSAGE("VRInputHandler: Started %.0fms cooldown for right hand", bladeReequipCooldown * 1000.0f);
+ m_rightHandCooldownTimer = 0.0f;
+          _MESSAGE("VRInputHandler: Started %.0fms cooldown for right hand (shield)", shieldReequipCooldown * 1000.0f);
         }
         }
         }
@@ -1067,13 +1098,16 @@ m_timeSinceLastCollision, bladeCollisionTimeout);
     m_pendingReequipRightTimer * 1000.0f);
  
    m_pendingReequipRight = false;
-                m_pendingReequipRightTimer = 0.0f;
+        m_pendingReequipRightTimer = 0.0f;
     
+      // Suppress draw sound during shield collision re-equip
+        EquipManager::s_suppressDrawSound = true;
   EquipManager::GetSingleton()->ForceReequipRightHand();
-         m_rightHandOnCooldown = true;
+        EquipManager::s_suppressDrawSound = false;
+    m_rightHandOnCooldown = true;
     m_rightHandCooldownTimer = 0.0f;
           _MESSAGE("VRInputHandler: Started %.0fms cooldown for right hand (shield)", shieldReequipCooldown * 1000.0f);
-         }
+    }
      }
     }
 
@@ -1111,7 +1145,7 @@ m_timeSinceLastCollision, bladeCollisionTimeout);
             }
   else
        {
-        // Check distance between GRABBED weapon and EQUIPPED weapon in other hand
+        // Check distance between GRABBED weapon and EQUIPPED weapon in the other hand
      // This is the key fix - we need to check grabbed-to-equipped distance, not equipped-to-equipped
           float bladeDistance = GetGrabbedToEquippedDistance(true);  // true = left VR controller
         
@@ -1152,7 +1186,10 @@ m_timeSinceLastCollision, bladeCollisionTimeout);
             PlayerCharacter* player = *g_thePlayer;
     if (player)
       {
+// Suppress pickup sound during internal re-equip
+           EquipManager::s_suppressPickupSound = true;
  bool activated = SafeActivate(m_autoEquipWeaponLeft, player, 0, 0, 1, true);
+       EquipManager::s_suppressPickupSound = false;
    _MESSAGE("VRInputHandler: Activate grabbed weapon result: %s", activated ? "SUCCESS" : "FAILED");
  
       if (activated)
@@ -1161,7 +1198,10 @@ m_timeSinceLastCollision, bladeCollisionTimeout);
   if (equipMan)
    {
     BGSEquipSlot* slot = isLeftGameHand ? GetLeftHandSlot() : GetRightHandSlot();
+    // Suppress draw sound during auto-equip
+      EquipManager::s_suppressDrawSound = true;
    CALL_MEMBER_FN(equipMan, EquipItem)(player, weaponForm, nullptr, 1, slot, false, true, false, nullptr);
+ EquipManager::s_suppressDrawSound = false;
    _MESSAGE("VRInputHandler: Equipped weapon to %s game hand (silent)",
 isLeftGameHand ? "LEFT" : "RIGHT");
           
@@ -1170,13 +1210,13 @@ isLeftGameHand ? "LEFT" : "RIGHT");
      {
          m_leftHandOnCooldown = true;
     m_leftHandCooldownTimer = 0.0f;
-  _MESSAGE("VRInputHandler: Started %.0fms cooldown for left hand (auto-equip)", bladeReequipCooldown * 1000.0f);
+  _MESSAGE("VRInputHandler: Started %.0fms cooldown for left hand", bladeReequipCooldown * 1000.0f);
        }
         else
   {
   m_rightHandOnCooldown = true;
          m_rightHandCooldownTimer = 0.0f;
-             _MESSAGE("VRInputHandler: Started %.0fms cooldown for right hand (auto-equip)", bladeReequipCooldown * 1000.0f);
+             _MESSAGE("VRInputHandler: Started %.0fms cooldown for right hand", bladeReequipCooldown * 1000.0f);
      }
     }
     }
@@ -1214,7 +1254,7 @@ isLeftGameHand ? "LEFT" : "RIGHT");
      }
       else
        {
-  // Check distance between GRABBED weapon and EQUIPPED weapon in other hand
+  // Check distance between GRABBED weapon and EQUIPPED weapon in the other hand
  float bladeDistance = GetGrabbedToEquippedDistance(false);  // false = right VR controller
     
  // Reset timer if blades are within imminent collision range (friction/sliding)
@@ -1254,8 +1294,11 @@ isLeftGameHand ? "LEFT" : "RIGHT");
   PlayerCharacter* player = *g_thePlayer;
           if (player)
   {
+      // Suppress pickup sound during internal re-equip
+         EquipManager::s_suppressPickupSound = true;
       bool activated = SafeActivate(m_autoEquipWeaponRight, player, 0, 0, 1, true);
-          _MESSAGE("VRInputHandler: Activate grabbed weapon result: %s", activated ? "SUCCESS" : "FAILED");
+         EquipManager::s_suppressPickupSound = false;
+ _MESSAGE("VRInputHandler: Activate grabbed weapon result: %s", activated ? "SUCCESS" : "FAILED");
      
   if (activated)
    {
@@ -1263,7 +1306,10 @@ isLeftGameHand ? "LEFT" : "RIGHT");
       if (equipMan)
         {
    BGSEquipSlot* slot = isLeftGameHand ? GetLeftHandSlot() : GetRightHandSlot();
+   // Suppress draw sound during auto-equip
+   EquipManager::s_suppressDrawSound = true;
  CALL_MEMBER_FN(equipMan, EquipItem)(player, weaponForm, nullptr, 1, slot, false, true, false, nullptr);
+  EquipManager::s_suppressDrawSound = false;
            _MESSAGE("VRInputHandler: Equipped weapon to %s game hand (silent)",
    isLeftGameHand ? "LEFT" : "RIGHT");
      
@@ -1501,7 +1547,10 @@ droppedWeapon->formID, droppedWeapon->baseForm->formID);
      PlayerCharacter* player = *g_thePlayer;
    if (player)
  {
-           bool activated = SafeActivate(droppedWeapon, player, 0, 0, 1, false);
+     // Suppress pickup sound during internal re-equip
+         EquipManager::s_suppressPickupSound = true;
+     bool activated = SafeActivate(droppedWeapon, player, 0, 0, 1, false);
+  EquipManager::s_suppressPickupSound = false;
     _MESSAGE("VRInputHandler: Activate result: %s", activated ? "SUCCESS" : "FAILED");
            }
   }

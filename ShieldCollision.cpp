@@ -306,16 +306,18 @@ m_lastCollision = collision;
         
         // Get shield facing direction (normal)
         // The shield's local Z axis typically points outward (facing direction)
-        NiMatrix33& rot = shieldNode->m_worldTransform.rot;
+        // NOTE: We negate this because in Skyrim VR the shield's Z axis points AWAY from the player
+    // (toward the back of the shield), so we need to flip it to get the front face direction
+      NiMatrix33& rot = shieldNode->m_worldTransform.rot;
         geometry.normal = NiPoint3(
-          rot.data[0][2],  // Z column X component
-            rot.data[1][2],  // Z column Y component
-            rot.data[2][2]   // Z column Z component
+         -rot.data[0][2],  // Z column X component (negated)
+            -rot.data[1][2],  // Z column Y component (negated)
+     -rot.data[2][2]   // Z column Z component (negated)
         );
-  geometry.normal = Normalize(geometry.normal);
+        geometry.normal = Normalize(geometry.normal);
         
-        // Set default shield radius (may need tuning based on actual shield models)
-     geometry.radius = 25.0f;
+        // Set shield radius from config (focuses on shield face, not edges)
+        geometry.radius = shieldRadius;
      
         // Calculate velocity
         if (deltaTime > 0.0f && (geometry.prevCenterPosition.x != 0.0f || 
@@ -444,14 +446,13 @@ return false;
         // Calculate relative velocity
     // Interpolate weapon velocity at contact point
         NiPoint3 weaponVel;
-        weaponVel.x = weapon.baseVelocity.x + bladeParam * (weapon.tipVelocity.x - weapon.baseVelocity.x);
-   weaponVel.y = weapon.baseVelocity.y + bladeParam * (weapon.tipVelocity.y - weapon.baseVelocity.y);
+     weaponVel.x = weapon.baseVelocity.x + bladeParam * (weapon.tipVelocity.x - weapon.baseVelocity.x);
+ weaponVel.y = weapon.baseVelocity.y + bladeParam * (weapon.tipVelocity.y - weapon.baseVelocity.y);
  weaponVel.z = weapon.baseVelocity.z + bladeParam * (weapon.tipVelocity.z - weapon.baseVelocity.z);
-        
-        NiPoint3 relVel;
-     relVel.x = weaponVel.x - shield.velocity.x;
-  relVel.y = weaponVel.y - shield.velocity.y;
-      relVel.z = weaponVel.z - shield.velocity.z;
+  
+ // Use weapon velocity directly - shield is considered stationary
+        // (shield movement should NOT affect collision detection)
+    NiPoint3 relVel = weaponVel;
         
      outResult.relativeVelocity = Length(relVel);
  
@@ -472,15 +473,44 @@ return false;
     float closingVelocity = Dot(relVel, separationDir);
         
         // Estimate time to collision
-        outResult.timeToCollision = EstimateTimeToCollision(distance, closingVelocity);
+     outResult.timeToCollision = EstimateTimeToCollision(distance, closingVelocity);
+     
+     // Check if weapon is in front of shield face (not behind or to the side)
+        // Calculate vector from shield center to blade contact point
+   NiPoint3 shieldToWeapon;
+        shieldToWeapon.x = bladePoint.x - shield.centerPosition.x;
+    shieldToWeapon.y = bladePoint.y - shield.centerPosition.y;
+        shieldToWeapon.z = bladePoint.z - shield.centerPosition.z;
         
-    // Check collision states
-        outResult.isColliding = (distance <= m_collisionThreshold);
-        outResult.isImminent = !outResult.isColliding && 
-            (distance <= m_imminentThreshold) && 
-       (closingVelocity > 0.0f);  // Only imminent if approaching
+        // Dot product with shield normal tells us if weapon is in front (positive) or behind (negative)
+        float frontFaceDot = Dot(shieldToWeapon, shield.normal);
+        bool weaponInFrontOfShield = (frontFaceDot > 0.0f);
         
-        return outResult.isColliding || outResult.isImminent;
+// Minimum closing velocity to prevent triggering on noise/tiny movements
+        // Only consider it "approaching" if moving at least 5 units/sec toward shield
+        const float minClosingVelocity = 5.0f;
+        bool isApproaching = (closingVelocity > minClosingVelocity);
+        
+        // Check collision states - only trigger if weapon is in front of shield face
+        outResult.isColliding = (distance <= m_collisionThreshold) && weaponInFrontOfShield;
+      outResult.isImminent = !outResult.isColliding && 
+   (distance <= m_imminentThreshold) && 
+   isApproaching &&         // Only imminent if approaching with meaningful velocity
+            weaponInFrontOfShield;       // Only imminent if in front of shield
+        
+        // Debug logging for troubleshooting
+        static int debugCounter = 0;
+        debugCounter++;
+      if (debugCounter % 200 == 0)
+        {
+       _MESSAGE("ShieldCollision: dist=%.2f, closingVel=%.2f, frontDot=%.2f, inFront=%s, approaching=%s, imminent=%s",
+  distance, closingVelocity, frontFaceDot,
+                weaponInFrontOfShield ? "YES" : "NO",
+      isApproaching ? "YES" : "NO",
+   outResult.isImminent ? "YES" : "NO");
+   }
+    
+  return outResult.isColliding || outResult.isImminent;
     }
 
     float ShieldCollisionTracker::EstimateTimeToCollision(float distance, float closingVelocity)
