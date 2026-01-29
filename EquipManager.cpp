@@ -326,6 +326,132 @@ EquipManager::GetSingleton()->OnEquip(item, actor, isLeftHand);
      LogEquipmentState();
     }
 
+  // Check if a weapon is from Interactive Pipe Smoking VR mod and should be excluded from draw sounds
+    // Returns true if the weapon should NOT play a draw sound
+    static bool IsPipeSmokingWeapon(UInt32 weaponFormID)
+    {
+        // Check if Interactive_Pipe_Smoking_VR.esp is loaded
+        static bool checkedForMod = false;
+    static bool modIsLoaded = false;
+        static UInt8 modIndex = 0;
+        
+        if (!checkedForMod)
+ {
+     checkedForMod = true;
+      DataHandler* dataHandler = DataHandler::GetSingleton();
+   if (dataHandler)
+            {
+         const ModInfo* modInfo = dataHandler->LookupModByName("Interactive_Pipe_Smoking_VR.esp");
+                if (modInfo && modInfo->IsActive())
+    {
+         modIsLoaded = true;
+         modIndex = modInfo->GetPartialIndex();
+        _MESSAGE("EquipManager: Interactive_Pipe_Smoking_VR.esp detected (index: %02X) - pipe weapons will be excluded from draw sounds", modIndex);
+      }
+            }
+     }
+        
+        // If mod is not loaded, don't exclude anything
+        if (!modIsLoaded)
+         return false;
+        
+        // Get the mod index from the weapon's FormID
+        UInt8 weaponModIndex = (weaponFormID >> 24) & 0xFF;
+        
+        // Check if the weapon is from the pipe smoking mod
+        if (weaponModIndex != modIndex)
+            return false;
+        
+        // Get the base FormID (lower 24 bits for regular plugins, lower 12 bits for ESL)
+        // For ESL plugins, the format is FExxxYYY where xxx is the light plugin index
+        UInt32 baseFormID = weaponFormID & 0x00FFFFFF;
+    
+        // If it's an ESL (FE prefix), get the actual base ID
+        if ((weaponFormID >> 24) == 0xFE)
+     {
+            baseFormID = weaponFormID & 0x00000FFF;
+        }
+        
+    // List of pipe smoking weapon base FormIDs to exclude:
+        // 0x000804, 0x00080A, 0x000810, 0x000817, 0x005902, 0x014C0A, 0x014C2E, 0x014C34
+ switch (baseFormID)
+     {
+       case 0x000804:
+  case 0x00080A:
+  case 0x000810:
+ case 0x000817:
+            case 0x005902:
+       case 0x014C0A:
+  case 0x014C2E:
+     case 0x014C34:
+        _MESSAGE("EquipManager: Weapon %08X is a pipe smoking item - skipping sound", weaponFormID);
+       return true;
+     default:
+      return false;
+        }
+}
+
+    // Check if a weapon is from Navigate VR mod and should be excluded from sounds
+    // Returns true if the weapon should NOT play sounds
+    static bool IsNavigateVRWeapon(UInt32 weaponFormID)
+    {
+        // Check if Navigate VR - Equipable Dynamic Compass and Maps.esp is loaded
+        static bool checkedForMod = false;
+   static bool modIsLoaded = false;
+    static UInt8 modIndex = 0;
+ 
+        if (!checkedForMod)
+        {
+         checkedForMod = true;
+  DataHandler* dataHandler = DataHandler::GetSingleton();
+          if (dataHandler)
+            {
+   const ModInfo* modInfo = dataHandler->LookupModByName("Navigate VR - Equipable Dynamic Compass and Maps.esp");
+  if (modInfo && modInfo->IsActive())
+  {
+     modIsLoaded = true;
+         modIndex = modInfo->GetPartialIndex();
+       _MESSAGE("EquipManager: Navigate VR mod detected (index: %02X) - map/compass items will be excluded from sounds", modIndex);
+        }
+            }
+        }
+ 
+        // If mod is not loaded, don't exclude anything
+if (!modIsLoaded)
+ return false;
+        
+        // Get the mod index from the weapon's FormID
+      UInt8 weaponModIndex = (weaponFormID >> 24) & 0xFF;
+        
+        // Check if the weapon is from the Navigate VR mod
+     if (weaponModIndex != modIndex)
+      return false;
+        
+        // Get the base FormID (lower 24 bits)
+    UInt32 baseFormID = weaponFormID & 0x00FFFFFF;
+        
+  // List of Navigate VR weapon base FormIDs to exclude:
+        // 0x0e09d, 0x37482, 0x6ed71, 0xbdcea
+        switch (baseFormID)
+     {
+            case 0x00e09d:
+  case 0x037482:
+        case 0x06ed71:
+            case 0x0bdcea:
+              _MESSAGE("EquipManager: Weapon %08X is a Navigate VR item - skipping sound", weaponFormID);
+    return true;
+       default:
+        return false;
+   }
+    }
+
+    // Combined check for items that should be completely excluded from weapon handling
+    // (Pipe Smoking VR items, Navigate VR, etc.)
+    static bool IsExcludedItem(UInt32 formID)
+    {
+        return IsPipeSmokingWeapon(formID) || IsNavigateVRWeapon(formID);
+    }
+
     void EquipManager::OnEquip(TESForm* item, Actor* actor, bool isLeftHand)
     {
       if (!item)
@@ -359,27 +485,28 @@ cachedMaceSound = GetFullFormIdFromEspAndFormId("Fake Edge VR.esp", 0x809);
      soundsCached = true;
         }
         
-     // Log specific weapon types and play draw sounds (unless suppressed by collision logic)
-        switch (type)
+     // Log specific weapon types and play draw sounds (unless suppressed by collision logic or excluded weapons)
+ bool shouldExclude = IsExcludedItem(item->formID);
+   switch (type)
      {
         case WeaponType::Dagger:
       _MESSAGE(">>> PLAYER EQUIPPED: DAGGER (FormID: %08X) in %s hand", item->formID, handName);
-   if (!s_suppressDrawSound && cachedDaggerSound != 0)
+   if (!s_suppressDrawSound && !shouldExclude && cachedDaggerSound != 0)
   PlaySoundAtPlayer(cachedDaggerSound);
     break;
-     case WeaponType::Sword:
+  case WeaponType::Sword:
        _MESSAGE(">>> PLAYER EQUIPPED: 1H SWORD (FormID: %08X) in %s hand", item->formID, handName);
-   if (!s_suppressDrawSound && cachedSwordSound != 0)
+   if (!s_suppressDrawSound && !shouldExclude && cachedSwordSound != 0)
     PlaySoundAtPlayer(cachedSwordSound);
   break;
      case WeaponType::Mace:
-    _MESSAGE(">>> PLAYER EQUIPPED: 1H MACE (FormID: %08X) in %s hand", item->formID, handName);
-     if (!s_suppressDrawSound && cachedMaceSound != 0)
+ _MESSAGE(">>> PLAYER EQUIPPED: 1H MACE (FormID: %08X) in %s hand", item->formID, handName);
+ if (!s_suppressDrawSound && !shouldExclude && cachedMaceSound != 0)
   PlaySoundAtPlayer(cachedMaceSound);
      break;
   case WeaponType::Axe:
-     _MESSAGE(">>> PLAYER EQUIPPED: 1H AXE (FormID: %08X) in %s hand", item->formID, handName);
-  if (!s_suppressDrawSound && cachedAxeSound != 0)
+   _MESSAGE(">>> PLAYER EQUIPPED: 1H AXE (FormID: %08X) in %s hand", item->formID, handName);
+  if (!s_suppressDrawSound && !shouldExclude && cachedAxeSound != 0)
       PlaySoundAtPlayer(cachedAxeSound);
      break;
   case WeaponType::Shield:
@@ -508,6 +635,11 @@ cachedMaceSound = GetFullFormIdFromEspAndFormId("Fake Edge VR.esp", 0x809);
     {
         if (!form)
   return false;
+
+        // Exclude items from mods that should never be treated as weapons
+   // (Pipe Smoking VR, Navigate VR, etc.)
+     if (IsExcludedItem(form->formID))
+         return false;
 
         if (form->formType != kFormType_Weapon)
        return false;
@@ -1085,18 +1217,25 @@ else
         
      // Play the weapon pickup sound from Fake Edge VR.esp (ESL-flagged)
      // BUT skip if this is from our internal re-equip logic (SafeActivate)
-        if (EquipManager::s_suppressPickupSound)
+    if (EquipManager::s_suppressPickupSound)
      {
    _MESSAGE("EquipManager: Skipping pickup sound (internal re-equip)");
           return kEvent_Continue;
-        }
+     }
+        
+     // Skip pickup sound for excluded items (pipe smoking, navigate VR, etc.)
+   if (IsExcludedItem(evn->itemFormId))
+        {
+         _MESSAGE("EquipManager: Skipping pickup sound (excluded item)");
+   return kEvent_Continue;
+ }
         
   // Base FormID is 0x800, plugin name is "Fake Edge VR.esp"
    static UInt32 cachedSoundFormId = 0;
-     if (cachedSoundFormId == 0)
-     {
+   if (cachedSoundFormId == 0)
+   {
           cachedSoundFormId = GetFullFormIdFromEspAndFormId("Fake Edge VR.esp", 0x800);
-   if (cachedSoundFormId != 0)
+ if (cachedSoundFormId != 0)
   {
   _MESSAGE("EquipManager: Cached weapon pickup sound FormID: %08X", cachedSoundFormId);
          }
