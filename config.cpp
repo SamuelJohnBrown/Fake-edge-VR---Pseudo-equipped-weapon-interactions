@@ -37,6 +37,7 @@ namespace FalseEdgeVR {
 	float shieldRadius = 15.0f;                // Shield face detection radius (units)
 
 	// Shield bash settings - defaults
+	bool shieldBashEnabled = true;   // Enable/disable shield bash tracking feature
 	int shieldBashThreshold = 3;   // Number of bashes required to trigger effect
 	float shieldBashWindow = 6.0f;// Time window (seconds) to register bashes
 	float shieldBashLockoutDuration = 240.0f;    // Lockout duration (seconds) after triggering effect (4 minutes)
@@ -212,7 +213,11 @@ namespace FalseEdgeVR {
 						std::string variableName;
 						std::string variableValueStr = GetConfigSettingsStringValue(line, variableName);
 
-						if (variableName == "BashThreshold")
+						if (variableName == "Enabled")
+						{
+							shieldBashEnabled = (std::stoi(variableValueStr) != 0);
+						}
+						else if (variableName == "BashThreshold")
 						{
 							shieldBashThreshold = std::stoi(variableValueStr);
 						}
@@ -256,8 +261,8 @@ namespace FalseEdgeVR {
 				shieldReequipThreshold, shieldCollisionTimeout, shieldTimeToCollisionThreshold);
 			_MESSAGE("  ReequipCooldown=%.3f, ReequipDelay=%.4f, SwingVelocityThreshold=%.1f, ShieldRadius=%.1f",
 				shieldReequipCooldown, shieldReequipDelay, shieldSwingVelocityThreshold, shieldRadius);
-			_MESSAGE("ShieldBash settings: BashThreshold=%d, BashWindow=%.1f, LockoutDuration=%.0f",
-				shieldBashThreshold, shieldBashWindow, shieldBashLockoutDuration);
+			_MESSAGE("ShieldBash settings: Enabled=%s, BashThreshold=%d, BashWindow=%.1f, LockoutDuration=%.0f",
+				shieldBashEnabled ? "true" : "false", shieldBashThreshold, shieldBashWindow, shieldBashLockoutDuration);
 			_MESSAGE("General settings: EquipGraceFrames=%d", equipGraceFrames);
 			return;
 		}

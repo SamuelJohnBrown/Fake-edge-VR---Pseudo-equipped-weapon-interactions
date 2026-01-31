@@ -166,9 +166,9 @@ namespace FalseEdgeVR
         // Clear cached weapon FormID
         void ClearCachedWeaponFormID(bool isLeftHand);
         
-        // ============================================
-        // Static Helper Functions
-  // ============================================
+        // Track if we're in dual-wield same weapon mode (for cleanup after re-equip)
+        bool WasDualWieldingSameWeapon(bool isLeftHand) const;
+
     private:
  EquipManager() = default;
         ~EquipManager() = default;
@@ -188,6 +188,15 @@ namespace FalseEdgeVR
      // Dropped weapon world references
       TESObjectREFR* m_droppedWeaponLeft = nullptr;
         TESObjectREFR* m_droppedWeaponRight = nullptr;
+        
+        // Track if we were dual-wielding same weapon when collision was triggered
+        // This is needed to know if we should clean up the duplicate after re-equip
+        bool m_wasDualWieldingSameWeaponLeft = false;
+   bool m_wasDualWieldingSameWeaponRight = false;
+        
+  // Track which hand we're currently force-unequipping (for same-weapon detection)
+        // -1 = none, 0 = right hand, 1 = left hand
+    int m_forceUnequipHand = -1;
         
       bool m_initialized = false;
     };

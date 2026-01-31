@@ -182,6 +182,9 @@ namespace FalseEdgeVR
         
         // Estimate time to collision based on closing velocity
       float EstimateTimeToCollision(float distance, float closingVelocity);
+  
+        // Estimate time to collision with scaled threshold (for dynamic blade length scaling)
+  float EstimateTimeToCollisionScaled(float distance, float closingVelocity, float scaledCollisionThreshold);
         
      // Helper: dot product
         static float Dot(const NiPoint3& a, const NiPoint3& b);

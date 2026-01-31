@@ -102,62 +102,81 @@ m_framesSinceEquipChange = 0;
         // Increment frame counter
    m_framesSinceEquipChange++;
         
-        // Check if left hand has HIGGS-grabbed weapon (from our collision avoidance)
-        bool leftHandHiggsGrabbed = false;
-        TESObjectREFR* higgsHeldLeft = nullptr;
-        
-        if (EquipManager::GetSingleton()->HasPendingReequip(true))
-        {
-    // Get the dropped weapon reference we created
-      higgsHeldLeft = EquipManager::GetSingleton()->GetDroppedWeaponRef(true);
-    if (higgsHeldLeft)
-        {
-  // Check if HIGGS is actually holding it
- if (higgsInterface)
-    {
-   TESObjectREFR* currentlyHeld = higgsInterface->GetGrabbedObject(true);
-     if (currentlyHeld == higgsHeldLeft)
-   {
-   leftHandHiggsGrabbed = true;
-      }
-       }
-        }
+   // Check if off-hand has HIGGS-grabbed weapon (from our collision avoidance)
+// Off-hand is LEFT in right-handed mode, RIGHT in left-handed mode
+   bool offHandIsLeft = !IsLeftHandedMode();
+   bool offHandVRControllerIsLeft = GameHandToVRController(offHandIsLeft);
+   bool offHandHiggsGrabbed = false;
+   TESObjectREFR* higgsHeldOffHand = nullptr;
+
+   // Debug: Log handedness mode periodically
+   static int handednessLogCounter = 0;
+   handednessLogCounter++;
+   if (handednessLogCounter % 500 == 1)
+ {
+       _MESSAGE("WeaponGeometry: IsLeftHandedMode()=%s, offHandIsLeft=%s, offHandVRControllerIsLeft=%s",
+     IsLeftHandedMode() ? "YES" : "NO",
+  offHandIsLeft ? "YES" : "NO",
+           offHandVRControllerIsLeft ? "YES" : "NO");
    }
-        
-        // Debug logging for HIGGS state
-        static bool loggedHiggsState = false;
-        if (EquipManager::GetSingleton()->HasPendingReequip(true) && !loggedHiggsState)
-    {
-            _MESSAGE("WeaponGeometry: Pending reequip - DroppedRef: %p, HIGGS holding: %s", 
-  higgsHeldLeft, leftHandHiggsGrabbed ? "YES" : "NO");
+
+   if (EquipManager::GetSingleton()->HasPendingReequip(offHandIsLeft))
+   {
+       // Get the dropped weapon reference we created
+       higgsHeldOffHand = EquipManager::GetSingleton()->GetDroppedWeaponRef(offHandIsLeft);
+       if (higgsHeldOffHand)
+       {
+           // Check if HIGGS is actually holding it
+           if (higgsInterface)
+           {
+               TESObjectREFR* currentlyHeld = higgsInterface->GetGrabbedObject(offHandVRControllerIsLeft);
+               if (currentlyHeld == higgsHeldOffHand)
+               {
+                   offHandHiggsGrabbed = true;
+               }
+           }
+       }
+   }
+
+   // Debug logging for HIGGS state
+   static bool loggedHiggsState = false;
+   if (EquipManager::GetSingleton()->HasPendingReequip(offHandIsLeft) && !loggedHiggsState)
+   {
+       _MESSAGE("WeaponGeometry: Pending reequip - DroppedRef: %p, HIGGS holding: %s",
+           higgsHeldOffHand, offHandHiggsGrabbed ? "YES" : "NO");
        loggedHiggsState = true;
-        }
+   }
    
-        // Update left hand geometry - skip if shield (ShieldCollisionTracker handles that)
-        if (leftEquipped && !leftIsShield)
-      {
-      // Normal equipped weapon
-            UpdateHandGeometry(true, deltaTime);
-        }
-        else if (leftHandHiggsGrabbed && higgsHeldLeft)
-        {
-   // HIGGS-grabbed weapon - update geometry from the grabbed object
-        UpdateHiggsGrabbedGeometry(true, higgsHeldLeft, deltaTime);
-        }
-        else
-        {
-  m_geometryState.leftHand.Clear();
-        }
- 
-  // Update right hand if weapon equipped - skip if shield
-        if (rightEquipped && !rightIsShield)
-        {
-      UpdateHandGeometry(false, deltaTime);
-      }
-        else
-        {
+   // Update left hand geometry - skip if shield (ShieldCollisionTracker handles that)
+   if (leftEquipped && !leftIsShield)
+   {
+       // Normal equipped weapon
+       UpdateHandGeometry(true, deltaTime);
+   }
+   else if (offHandHiggsGrabbed && higgsHeldOffHand && offHandIsLeft)
+   {
+       // HIGGS-grabbed weapon in left hand - update geometry from the grabbed object
+       UpdateHiggsGrabbedGeometry(true, higgsHeldOffHand, deltaTime);
+   }
+   else
+   {
+       m_geometryState.leftHand.Clear();
+   }
+
+   // Update right hand if weapon equipped - skip if shield
+   if (rightEquipped && !rightIsShield)
+   {
+       UpdateHandGeometry(false, deltaTime);
+   }
+   else if (offHandHiggsGrabbed && higgsHeldOffHand && !offHandIsLeft)
+   {
+       // HIGGS-grabbed weapon in right hand - update geometry from the grabbed object
+       UpdateHiggsGrabbedGeometry(false, higgsHeldOffHand, deltaTime);
+   }
+   else
+   {
        m_geometryState.rightHand.Clear();
-        }
+   }
         
         // Check for blade collision if both hands have valid weapons
     // Also verify geometry is actually reasonable (not at origin)
@@ -179,13 +198,13 @@ m_framesSinceEquipChange = 0;
         static bool loggedBothValid = false;
          static bool loggedHiggsTracking = false;
             
-     if (!loggedBothValid && !leftHandHiggsGrabbed)
+     if (!loggedBothValid && !offHandHiggsGrabbed)
   {
          _MESSAGE("WeaponGeometryTracker: Both hands have valid geometry!");
      loggedBothValid = true;
    }
   
-          if (leftHandHiggsGrabbed && !loggedHiggsTracking)
+          if (offHandHiggsGrabbed && !loggedHiggsTracking)
    {
        _MESSAGE("WeaponGeometryTracker: Tracking HIGGS-grabbed weapon + equipped weapon");
    _MESSAGE("  Left (HIGGS):  Base(%.1f, %.1f, %.1f) Tip(%.1f, %.1f, %.1f)",
@@ -213,7 +232,7 @@ m_framesSinceEquipChange = 0;
    
       // Log distance periodically when HIGGS grabbed
             static int distanceLogCounter = 0;
-   if (leftHandHiggsGrabbed)
+   if (offHandHiggsGrabbed)
             {
       distanceLogCounter++;
  if (distanceLogCounter % 100 == 1)  // Log every 100 frames
@@ -240,7 +259,7 @@ m_collisionCallback(collision);
          if (!m_wasInContact)
         {
         _MESSAGE("WeaponGeometry: === BLADES TOUCHING === (HIGGS grabbed: %s)", 
-  leftHandHiggsGrabbed ? "YES" : "NO");
+  offHandHiggsGrabbed ? "YES" : "NO");
  _MESSAGE("  Collision Point: (%.2f, %.2f, %.2f)",
     collision.collisionPoint.x,
        collision.collisionPoint.y,
@@ -265,7 +284,7 @@ m_collisionCallback(collision);
        // Also check cooldown - don't trigger if we just re-equipped (prevents rapid cycling when blades slide)
        // EXCEPTION: Backup threshold bypasses cooldown as a safety net
         // IMPORTANT: Don't trigger during grace period after equipment change
-    bool leftHandOnCooldown = VRInputHandler::GetSingleton()->IsHandOnCooldown(true);
+        bool offHandOnCooldown = VRInputHandler::GetSingleton()->IsHandOnCooldown(offHandIsLeft);
      bool withinBackupOnly = (collision.closestDistance <= bladeImminentThresholdBackup) && 
            (collision.closestDistance > m_imminentThreshold);
         bool inGracePeriod = (m_framesSinceEquipChange < equipGraceFrames);
@@ -281,8 +300,8 @@ m_collisionCallback(collision);
       loggedGracePeriod = true;
  }
         }
-        else if (!m_wasImminent && !m_wasInContact && !leftHandHiggsGrabbed && 
- (!leftHandOnCooldown || withinBackupOnly))  // Backup threshold bypasses cooldown
+        else if (!m_wasImminent && !m_wasInContact && !offHandHiggsGrabbed && 
+            (!offHandOnCooldown || withinBackupOnly))  // Backup threshold bypasses cooldown
     {
  // Reset grace period log flag
     static bool loggedGracePeriod = false;
@@ -304,17 +323,20 @@ _MESSAGE("WeaponGeometry: Collision imminent but CLOSE COMBAT MODE active - skip
      loggedCloseCombatSkip = false;
     
 _MESSAGE("WeaponGeometry: COLLISION IMMINENT!%s", withinBackupOnly ? " (BACKUP THRESHOLD - bypassing cooldown)" : "");
-        _MESSAGE("  Distance: %.2f, Time to collision: %.3f sec",
+   _MESSAGE("  Distance: %.2f, Time to collision: %.3f sec",
 collision.closestDistance,
   collision.timeToCollision);
  
-      // Unequip the left GAME hand weapon and have HIGGS grab it
-  // Note: ForceUnequipAndGrab takes GAME HAND, not VR controller
-  _MESSAGE("WeaponGeometry: Triggering game LEFT hand unequip + HIGGS grab to prevent collision!");
-   EquipManager::GetSingleton()->ForceUnequipAndGrab(true);  // true = left GAME hand
+      // Unequip the OFF-HAND weapon and have HIGGS grab it
+      // In right-handed mode: off-hand = LEFT game hand
+      // In left-handed mode: off-hand = RIGHT game hand
+      bool offHandIsLeft = !IsLeftHandedMode();  // Left game hand is off-hand in right-handed mode
+      _MESSAGE("WeaponGeometry: Triggering game %s hand unequip + HIGGS grab to prevent collision!", 
+          offHandIsLeft ? "LEFT" : "RIGHT");
+      EquipManager::GetSingleton()->ForceUnequipAndGrab(offHandIsLeft);
      }
    }
- else if (!m_wasImminent && !m_wasInContact && leftHandOnCooldown && !withinBackupOnly && !inGracePeriod)
+        else if (!m_wasImminent && !m_wasInContact && offHandOnCooldown && !withinBackupOnly && !inGracePeriod)
  {
         // Log that we skipped due to cooldown (only once per cooldown period)
      static bool loggedCooldownSkip = false;
@@ -324,7 +346,7 @@ collision.closestDistance,
             loggedCooldownSkip = true;
           }
     }
-   else if (!leftHandOnCooldown && !inGracePeriod)
+        else if (!offHandOnCooldown && !inGracePeriod)
     {
  // Reset the logged flag when cooldown allows triggering again
 static bool loggedCooldownSkip = false;
@@ -337,7 +359,7 @@ else
      if (m_wasInContact)
 {
     _MESSAGE("WeaponGeometry: === BLADES NO LONGER TOUCHING === (HIGGS grabbed: %s)",
-  leftHandHiggsGrabbed ? "YES" : "NO");
+  offHandHiggsGrabbed ? "YES" : "NO");
      _MESSAGE("  Current distance: %.2f (threshold: %.2f)", 
          collision.closestDistance, m_collisionThreshold);
     
@@ -776,7 +798,7 @@ return "SHIELD";
     {
      outResult.Clear();
         
-        if (!m_geometryState.leftHand.isValid || !m_geometryState.rightHand.isValid)
+     if (!m_geometryState.leftHand.isValid || !m_geometryState.rightHand.isValid)
   return false;
      
         const NiPoint3& leftBase = m_geometryState.leftHand.basePosition;
@@ -785,13 +807,13 @@ return "SHIELD";
         const NiPoint3& rightTip = m_geometryState.rightHand.tipPosition;
         
         float leftParam, rightParam;
-        NiPoint3 closestLeft, closestRight;
+  NiPoint3 closestLeft, closestRight;
         
         float distance = ClosestDistanceBetweenSegments(
-            leftBase, leftTip,
-            rightBase, rightTip,
+ leftBase, leftTip,
+   rightBase, rightTip,
      leftParam, rightParam,
-         closestLeft, closestRight
+ closestLeft, closestRight
   );
         
         outResult.closestDistance = distance;
@@ -800,33 +822,91 @@ return "SHIELD";
         outResult.leftBladeContactPoint = closestLeft;
     outResult.rightBladeContactPoint = closestRight;
  
-        outResult.collisionPoint.x = (closestLeft.x + closestRight.x) * 0.5f;
-        outResult.collisionPoint.y = (closestLeft.y + closestRight.y) * 0.5f;
+     outResult.collisionPoint.x = (closestLeft.x + closestRight.x) * 0.5f;
+   outResult.collisionPoint.y = (closestLeft.y + closestRight.y) * 0.5f;
  outResult.collisionPoint.z = (closestLeft.z + closestRight.z) * 0.5f;
         
+        // ============================================
+        // DYNAMIC THRESHOLD SCALING based on blade length
+        // ============================================
+        // Different weapon types have different actual blade lengths
+        // Sword reach ~1.0 = blade length ~70 units
+      // Dagger reach ~0.5-0.7 = blade length ~25-35 units (much shorter!)
+        
+  const float DAGGER_MAX_BLADE_LENGTH = 55.0f;  // Blades shorter than this are daggers
+        
+        float leftBladeLen = m_geometryState.leftHand.bladeLength;
+    float rightBladeLen = m_geometryState.rightHand.bladeLength;
+        float shorterBladeLen = (leftBladeLen < rightBladeLen) ? leftBladeLen : rightBladeLen;
+        
+        // Detect if weapons are daggers based on actual blade length (works for both equipped and HIGGS grabbed)
+   bool leftIsDagger = (leftBladeLen > 0.1f && leftBladeLen <= DAGGER_MAX_BLADE_LENGTH);
+bool rightIsDagger = (rightBladeLen > 0.1f && rightBladeLen <= DAGGER_MAX_BLADE_LENGTH);
+        bool bothDaggers = leftIsDagger && rightIsDagger;
+        bool eitherDagger = leftIsDagger || rightIsDagger;
+        
+   // For daggers, use VERY aggressive threshold scaling
+        // Daggers should only trigger when actually about to collide
+     float scaleFactor = 1.0f;
+    
+        if (bothDaggers)
+        {
+        // Dual daggers: use very small thresholds
+            scaleFactor = 0.25f;  // 25% of normal thresholds
+        }
+        else if (eitherDagger)
+        {
+  // One dagger + one longer weapon: use moderate thresholds
+            scaleFactor = 0.5f;  // 50% of normal thresholds
+        }
+        else
+        {
+            // Both are longer weapons (swords, axes, etc): use normal thresholds
+  scaleFactor = 1.0f;
+        }
+     
+        // Apply scaling to thresholds
+      float scaledCollisionThreshold = m_collisionThreshold * scaleFactor;
+  float scaledImminentThreshold = m_imminentThreshold * scaleFactor;
+        float scaledBackupThreshold = bladeImminentThresholdBackup * scaleFactor;
+        
+  // Debug: Log the scaling periodically
+  static int scaleLogCounter = 0;
+ scaleLogCounter++;
+   if (scaleLogCounter % 500 == 1)
+       {
+   _MESSAGE("WeaponGeometry: Blade lengths - Left: %.1f, Right: %.1f, Shorter: %.1f",
+ leftBladeLen, rightBladeLen, shorterBladeLen);
+_MESSAGE("WeaponGeometry: LeftDagger=%s, RightDagger=%s, BothDaggers=%s, ScaleFactor: %.2f",
+       leftIsDagger ? "YES" : "NO", rightIsDagger ? "YES" : "NO",
+  bothDaggers ? "YES" : "NO", scaleFactor);
+   _MESSAGE("WeaponGeometry: Scaled thresholds - Collision: %.2f, Imminent: %.2f, Backup: %.2f",
+  scaledCollisionThreshold, scaledImminentThreshold, scaledBackupThreshold);
+      }
+
         // Calculate velocities at closest points
-        NiPoint3 leftVel, rightVel;
+     NiPoint3 leftVel, rightVel;
         
   leftVel.x = m_geometryState.leftHand.baseVelocity.x + 
       leftParam * (m_geometryState.leftHand.tipVelocity.x - m_geometryState.leftHand.baseVelocity.x);
         leftVel.y = m_geometryState.leftHand.baseVelocity.y + 
  leftParam * (m_geometryState.leftHand.tipVelocity.y - m_geometryState.leftHand.baseVelocity.y);
-        leftVel.z = m_geometryState.leftHand.baseVelocity.z + 
+  leftVel.z = m_geometryState.leftHand.baseVelocity.z + 
      leftParam * (m_geometryState.leftHand.tipVelocity.z - m_geometryState.leftHand.baseVelocity.z);
-        
-        rightVel.x = m_geometryState.rightHand.baseVelocity.x + 
+  
+    rightVel.x = m_geometryState.rightHand.baseVelocity.x + 
   rightParam * (m_geometryState.rightHand.tipVelocity.x - m_geometryState.rightHand.baseVelocity.x);
-        rightVel.y = m_geometryState.rightHand.baseVelocity.y + 
-    rightParam * (m_geometryState.rightHand.tipVelocity.y - m_geometryState.rightHand.baseVelocity.y);
-        rightVel.z = m_geometryState.rightHand.baseVelocity.z + 
+    rightVel.y = m_geometryState.rightHand.baseVelocity.y + 
+ rightParam * (m_geometryState.rightHand.tipVelocity.y - m_geometryState.rightHand.baseVelocity.y);
+    rightVel.z = m_geometryState.rightHand.baseVelocity.z + 
             rightParam * (m_geometryState.rightHand.tipVelocity.z - m_geometryState.rightHand.baseVelocity.z);
-        
+  
       NiPoint3 relVel;
    relVel.x = leftVel.x - rightVel.x;
         relVel.y = leftVel.y - rightVel.y;
         relVel.z = leftVel.z - rightVel.z;
    
-        outResult.relativeVelocity = sqrt(relVel.x * relVel.x + relVel.y * relVel.y + relVel.z * relVel.z);
+   outResult.relativeVelocity = sqrt(relVel.x * relVel.x + relVel.y * relVel.y + relVel.z * relVel.z);
         
         // Calculate closing velocity (positive = approaching, negative = separating)
       // Direction from left closest point to right closest point
@@ -836,23 +916,23 @@ return "SHIELD";
    separationDir.z = closestRight.z - closestLeft.z;
    
         float sepLength = sqrt(separationDir.x * separationDir.x + 
-               separationDir.y * separationDir.y + 
-             separationDir.z * separationDir.z);
+        separationDir.y * separationDir.y + 
+           separationDir.z * separationDir.z);
   if (sepLength > 0.0001f)
         {
-            separationDir.x /= sepLength;
-            separationDir.y /= sepLength;
+  separationDir.x /= sepLength;
+       separationDir.y /= sepLength;
     separationDir.z /= sepLength;
   }
         
         // Closing velocity is the component of relative velocity along separation direction
         float closingVelocity = Dot(relVel, separationDir);
         
-        // Estimate time to collision
-        outResult.timeToCollision = EstimateTimeToCollision(distance, closingVelocity);
+        // Estimate time to collision (using scaled threshold)
+        outResult.timeToCollision = EstimateTimeToCollisionScaled(distance, closingVelocity, scaledCollisionThreshold);
 
-        // Check collision states
-      outResult.isColliding = (distance <= m_collisionThreshold);
+   // Check collision states using SCALED thresholds
+      outResult.isColliding = (distance <= scaledCollisionThreshold);
   
   // Imminent collision detection - trigger if:
         // 1. Within primary distance threshold AND approaching with significant velocity, OR
@@ -863,34 +943,72 @@ return "SHIELD";
         // A closing velocity of ~50 units/sec means blades are actually moving toward each other intentionally
       const float MIN_CLOSING_VELOCITY = 50.0f;  // Minimum velocity to consider "approaching"
         
-        bool withinPrimaryThreshold = (distance <= m_imminentThreshold) && (closingVelocity >= MIN_CLOSING_VELOCITY);
-        bool withinBackupThreshold = (distance <= bladeImminentThresholdBackup) && (closingVelocity >= MIN_CLOSING_VELOCITY);
+      bool withinPrimaryThreshold = (distance <= scaledImminentThreshold) && (closingVelocity >= MIN_CLOSING_VELOCITY);
+        bool withinBackupThreshold = (distance <= scaledBackupThreshold) && (closingVelocity >= MIN_CLOSING_VELOCITY);
         
  // Fast approach only triggers if BOTH time is short AND distance is within backup threshold
-        // This prevents false positives at large distances
-      bool fastApproaching = (outResult.timeToCollision > 0.0f) && 
-     (outResult.timeToCollision < bladeTimeToCollisionThreshold) &&
-   (distance <= bladeImminentThresholdBackup);
+// This prevents false positives at large distances
+   // For daggers (short weapons), DISABLE fast approach entirely - it causes too many false positives
+    // because the time-to-collision calculation doesn't account for 3D trajectory well
+     bool fastApproaching = false;
+        if (!bothDaggers)
+  {
+     // Only enable fast approach for longer weapons (swords, axes, etc.)
+    fastApproaching = (outResult.timeToCollision > 0.0f) && 
+       (outResult.timeToCollision < bladeTimeToCollisionThreshold) &&
+    (distance <= scaledBackupThreshold);
+}
      
         outResult.isImminent = !outResult.isColliding && (withinPrimaryThreshold || withinBackupThreshold || fastApproaching);
   
-        return outResult.isColliding || outResult.isImminent;
+        // Debug: Log when imminent is triggered
+   if (outResult.isImminent)
+        {
+   _MESSAGE("WeaponGeometry: IMMINENT DEBUG - dist=%.2f, scaledImm=%.2f, scaledBackup=%.2f, timeToCol=%.3f, timeThresh=%.3f",
+   distance, scaledImminentThreshold, scaledBackupThreshold, 
+        outResult.timeToCollision, bladeTimeToCollisionThreshold);
+           _MESSAGE("WeaponGeometry: IMMINENT DEBUG - primary=%s, backup=%s, fast=%s, closingVel=%.1f",
+  withinPrimaryThreshold ? "YES" : "NO",
+   withinBackupThreshold ? "YES" : "NO",
+ fastApproaching ? "YES" : "NO",
+   closingVelocity);
+      _MESSAGE("WeaponGeometry: IMMINENT DEBUG - leftBladeLen=%.1f, rightBladeLen=%.1f, scaleFactor=%.2f",
+  m_geometryState.leftHand.bladeLength, m_geometryState.rightHand.bladeLength, scaleFactor);
+        }
+
+     return outResult.isColliding || outResult.isImminent;
     }
 
-    float WeaponGeometryTracker::EstimateTimeToCollision(float distance, float closingVelocity)
+  float WeaponGeometryTracker::EstimateTimeToCollisionScaled(float distance, float closingVelocity, float scaledCollisionThreshold)
     {
         // If not approaching (velocity <= 0) or already colliding, return -1
-        if (closingVelocity <= 0.0f || distance <= m_collisionThreshold)
-          return -1.0f;
+        if (closingVelocity <= 0.0f || distance <= scaledCollisionThreshold)
+  return -1.0f;
         
-        // Time = distance / velocity
-    float timeToCollision = (distance - m_collisionThreshold) / closingVelocity;
+  // Time = distance / velocity
+    float timeToCollision = (distance - scaledCollisionThreshold) / closingVelocity;
    
-        // Cap at a reasonable maximum (e.g., 2 seconds)
+    // Cap at a reasonable maximum (e.g., 2 seconds)
   if (timeToCollision > 2.0f)
    return -1.0f;
       
         return timeToCollision;
+}
+
+    float WeaponGeometryTracker::EstimateTimeToCollision(float distance, float closingVelocity)
+    {
+        // If not approaching (velocity <= 0) or already colliding, return -1
+      if (closingVelocity <= 0.0f || distance <= m_collisionThreshold)
+    return -1.0f;
+        
+  // Time = distance / velocity
+ float timeToCollision = (distance - m_collisionThreshold) / closingVelocity;
+   
+        // Cap at a reasonable maximum (e.g., 2 seconds)
+  if (timeToCollision > 2.0f)
+   return -1.0f;
+   
+      return timeToCollision;
     }
 
     float WeaponGeometryTracker::ClosestDistanceBetweenSegments(
@@ -901,17 +1019,17 @@ return "SHIELD";
     {
         NiPoint3 d1, d2, r;
    d1.x = q1.x - p1.x;
-     d1.y = q1.y - p1.y;
-        d1.z = q1.z - p1.z;
+d1.y = q1.y - p1.y;
+d1.z = q1.z - p1.z;
         
-        d2.x = q2.x - p2.x;
-        d2.y = q2.y - p2.y;
+    d2.x = q2.x - p2.x;
+   d2.y = q2.y - p2.y;
      d2.z = q2.z - p2.z;
-        
+   
         r.x = p1.x - p2.x;
         r.y = p1.y - p2.y;
         r.z = p1.z - p2.z;
-        
+     
         float a = Dot(d1, d1);
  float e = Dot(d2, d2);
  float f = Dot(d2, r);
@@ -927,22 +1045,22 @@ return "SHIELD";
         else if (a <= 0.0001f)
         {
 s = 0.0f;
-     t = Clamp(f / e, 0.0f, 1.0f);
+   t = Clamp(f / e, 0.0f, 1.0f);
         }
         else
-        {
+    {
        float c = Dot(d1, r);
             if (e <= 0.0001f)
-     {
-          t = 0.0f;
+   {
+ t = 0.0f;
      s = Clamp(-c / a, 0.0f, 1.0f);
        }
     else
             {
-   float b = Dot(d1, d2);
-                float denom = a * e - b * b;
+ float b = Dot(d1, d2);
+      float denom = a * e - b * b;
     
-                if (denom != 0.0f)
+      if (denom != 0.0f)
     {
         s = Clamp((b * f - c * e) / denom, 0.0f, 1.0f);
      }
@@ -953,37 +1071,37 @@ s = 0.0f;
     
          t = (b * s + f) / e;
  
-          if (t < 0.0f)
+if (t < 0.0f)
 {
          t = 0.0f;
          s = Clamp(-c / a, 0.0f, 1.0f);
                 }
     else if (t > 1.0f)
-                {
-       t = 1.0f;
+    {
+ t = 1.0f;
            s = Clamp((b - c) / a, 0.0f, 1.0f);
-                }
+           }
     }
         }
         
-        outParam1 = s;
-        outParam2 = t;
-        
+     outParam1 = s;
+      outParam2 = t;
+    
         outClosestPoint1 = PointAlongSegment(p1, q1, s);
         outClosestPoint2 = PointAlongSegment(p2, q2, t);
         
         NiPoint3 diff;
         diff.x = outClosestPoint1.x - outClosestPoint2.x;
-        diff.y = outClosestPoint1.y - outClosestPoint2.y;
-        diff.z = outClosestPoint1.z - outClosestPoint2.z;
-        
-        return sqrt(diff.x * diff.x + diff.y * diff.y + diff.z * diff.z);
+    diff.y = outClosestPoint1.y - outClosestPoint2.y;
+    diff.z = outClosestPoint1.z - outClosestPoint2.z;
+  
+   return sqrt(diff.x * diff.x + diff.y * diff.y + diff.z * diff.z);
     }
 
-    float WeaponGeometryTracker::Dot(const NiPoint3& a, const NiPoint3& b)
+float WeaponGeometryTracker::Dot(const NiPoint3& a, const NiPoint3& b)
     {
-      return a.x * b.x + a.y * b.y + a.z * b.z;
-    }
+   return a.x * b.x + a.y * b.y + a.z * b.z;
+  }
 
     float WeaponGeometryTracker::Clamp(float value, float min, float max)
     {
@@ -992,12 +1110,12 @@ s = 0.0f;
   return value;
     }
 
-    NiPoint3 WeaponGeometryTracker::PointAlongSegment(const NiPoint3& start, const NiPoint3& end, float t)
+ NiPoint3 WeaponGeometryTracker::PointAlongSegment(const NiPoint3& start, const NiPoint3& end, float t)
     {
         NiPoint3 result;
  result.x = start.x + t * (end.x - start.x);
         result.y = start.y + t * (end.y - start.y);
-        result.z = start.z + t * (end.z - start.z);
+   result.z = start.z + t * (end.z - start.z);
    return result;
     }
 
@@ -1008,9 +1126,9 @@ s = 0.0f;
   
         if (!leftBlade.isValid || !rightBlade.isValid)
       {
-            m_inXPose = false;
-            if (m_wasInXPose)
-            {
+       m_inXPose = false;
+       if (m_wasInXPose)
+   {
   _MESSAGE("WeaponGeometry: *** X-POSE ENDED *** (blade geometry invalid)");
        }
   return;
@@ -1031,9 +1149,9 @@ s = 0.0f;
      float leftLen = sqrt(leftDir.x * leftDir.x + leftDir.y * leftDir.y + leftDir.z * leftDir.z);
         float rightLen = sqrt(rightDir.x * rightDir.x + rightDir.y * rightDir.y + rightDir.z * rightDir.z);
 
-     if (leftLen < 0.001f || rightLen < 0.001f)
+ if (leftLen < 0.001f || rightLen < 0.001f)
  {
-            m_inXPose = false;
+      m_inXPose = false;
    if (m_wasInXPose)
     {
       _MESSAGE("WeaponGeometry: *** X-POSE ENDED *** (blade length too short)");
@@ -1045,16 +1163,16 @@ s = 0.0f;
   leftDir.y /= leftLen;
         leftDir.z /= leftLen;
 
-        rightDir.x /= rightLen;
+ rightDir.x /= rightLen;
    rightDir.y /= rightLen;
     rightDir.z /= rightLen;
 
         // Get player forward direction (Y axis in Skyrim is forward)
         PlayerCharacter* player = *g_thePlayer;
         if (!player)
-     {
+{
         m_inXPose = false;
-       if (m_wasInXPose)
+     if (m_wasInXPose)
   {
     _MESSAGE("WeaponGeometry: *** X-POSE ENDED *** (no player)");
      }
@@ -1063,30 +1181,30 @@ s = 0.0f;
 
       NiPoint3 playerForward;
         // Use player's rotation angle (rot.z is heading in radians)
-        float heading = player->rot.z;
+   float heading = player->rot.z;
         playerForward.x = sin(heading);
         playerForward.y = cos(heading);
-        playerForward.z = 0.0f;
+   playerForward.z = 0.0f;
 
-        // Calculate dot product between blades (negative = crossing/X shape)
+   // Calculate dot product between blades (negative = crossing/X shape)
         float bladeDot = leftDir.x * rightDir.x + leftDir.y * rightDir.y + leftDir.z * rightDir.z;
-    
+ 
       // Calculate angle between blades
-        float bladeAngle = acos(Clamp(bladeDot, -1.0f, 1.0f)) * (180.0f / 3.14159f);
+    float bladeAngle = acos(Clamp(bladeDot, -1.0f, 1.0f)) * (180.0f / 3.14159f);
 
-        // Calculate how much each blade is facing forward (dot with player forward)
-   float leftForwardDot = leftDir.x * playerForward.x + leftDir.y * playerForward.y;
+      // Calculate how much each blade is facing forward (dot with player forward)
+float leftForwardDot = leftDir.x * playerForward.x + leftDir.y * playerForward.y;
     float rightForwardDot = rightDir.x * playerForward.x + rightDir.y * playerForward.y;
 
         // Check if blades are pointing upward (positive Z component)
-        bool leftPointingUp = leftDir.z > 0.3f;  // At least 30% upward
+      bool leftPointingUp = leftDir.z > 0.3f;  // At least 30% upward
         bool rightPointingUp = rightDir.z > 0.3f;
 
         // X-pose criteria:
-        // 1. Blades are crossing (angle between them is 30-150 degrees - not parallel, not same direction)
+      // 1. Blades are crossing (angle between them is 30-150 degrees - not parallel, not same direction)
         // 2. Both blades are pointing somewhat upward
  // 3. Blades are roughly facing forward (not pointing backward)
-        bool isCrossing = (bladeAngle > 30.0f && bladeAngle < 150.0f);
+     bool isCrossing = (bladeAngle > 30.0f && bladeAngle < 150.0f);
         bool bothPointingUp = leftPointingUp && rightPointingUp;
         bool facingForward = (leftForwardDot > -0.5f) && (rightForwardDot > -0.5f);
 
@@ -1104,29 +1222,29 @@ s = 0.0f;
       rightPointingUp ? "YES" : "NO", rightDir.z);
   _MESSAGE("  Facing forward: %s (leftDot=%.2f, rightDot=%.2f)",
  facingForward ? "YES" : "NO", leftForwardDot, rightForwardDot);
-         _MESSAGE("WeaponGeometry: *** X-POSE DETECTED! *** Blades crossed facing forward!");
-         
+      _MESSAGE("WeaponGeometry: *** X-POSE DETECTED! *** Blades crossed facing forward!");
+     
          // Start blocking when X-pose begins
-         StartBlocking();
+       StartBlocking();
       }
    else if (!m_inXPose && m_wasInXPose)
-        {
+    {
     _MESSAGE("WeaponGeometry: *** X-POSE ENDED ***");
   _MESSAGE("  Blade angle: %.1f degrees (crossing: %s)", bladeAngle, isCrossing ? "YES" : "NO");
        _MESSAGE("  Left pointing up: %s (z=%.2f), Right pointing up: %s (z=%.2f)",
      leftPointingUp ? "YES" : "NO", leftDir.z,
    rightPointingUp ? "YES" : "NO", rightDir.z);
-            _MESSAGE("  Facing forward: %s (leftDot=%.2f, rightDot=%.2f)",
+  _MESSAGE("  Facing forward: %s (leftDot=%.2f, rightDot=%.2f)",
  facingForward ? "YES" : "NO", leftForwardDot, rightForwardDot);
-         
-         // Stop blocking when X-pose ends
+     
+      // Stop blocking when X-pose ends
          StopBlocking();
  }
     }
 
     // ============================================
     // Convenience Functions
-    // ============================================
+  // ============================================
 
     void InitializeWeaponGeometryTracker()
   {
@@ -1138,3 +1256,4 @@ s = 0.0f;
         WeaponGeometryTracker::GetSingleton()->Update(deltaTime);
     }
 }
+

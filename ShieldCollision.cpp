@@ -119,61 +119,65 @@ TESForm* rightEquipped = player->GetEquippedObject(false);
    (directLeftIsShield || directRightIsShield) ? "YES" : "NO");
         }
         
-    // Check right hand has HIGGS-grabbed weapon (from our shield collision avoidance)
-  bool rightHandHiggsGrabbed = false;
-        TESObjectREFR* higgsHeldRight = nullptr;
+        // Check weapon hand has HIGGS-grabbed weapon (from our shield collision avoidance)
+       // Weapon hand is OPPOSITE of shield hand
+        bool weaponHandIsLeft = !m_shieldInLeftHand;
+        bool weaponVRControllerIsLeft = GameHandToVRController(weaponHandIsLeft);
+   bool weaponHandHiggsGrabbed = false;
+        TESObjectREFR* higgsHeldWeapon = nullptr;
  
-        if (EquipManager::GetSingleton()->HasPendingReequip(false))
-  {
-            // Get the dropped weapon reference we created
-         higgsHeldRight = EquipManager::GetSingleton()->GetDroppedWeaponRef(false);
-            if (higgsHeldRight)
-    {
-// Check if HIGGS is actually holding it
-  if (higgsInterface)
+        if (EquipManager::GetSingleton()->HasPendingReequip(weaponHandIsLeft))
+        {
+         // Get the dropped weapon reference we created
+         higgsHeldWeapon = EquipManager::GetSingleton()->GetDroppedWeaponRef(weaponHandIsLeft);
+        if (higgsHeldWeapon)
+{
+        // Check if HIGGS is actually holding it
+         if (higgsInterface)
           {
-         TESObjectREFR* currentlyHeld = higgsInterface->GetGrabbedObject(false);
-        if (currentlyHeld == higgsHeldRight)
-           {
-          rightHandHiggsGrabbed = true;
-         }
-       }
-       }
-     }
+           TESObjectREFR* currentlyHeld = higgsInterface->GetGrabbedObject(weaponVRControllerIsLeft);
+                if (currentlyHeld == higgsHeldWeapon)
+      {
+   weaponHandHiggsGrabbed = true;
+ }
+    }
+      }
+        }
         
 // Check for weapon-shield collision if we have a shield
       // and either a weapon equipped in the other hand OR a HIGGS-grabbed weapon
         if (m_hasShield)
-        {
-     bool hasWeaponToCheck = false;
-            
-            if (m_shieldInLeftHand)
-        {
-                // Shield in left hand - check right hand for weapon
-  hasWeaponToCheck = currentEquipState.rightHand.isEquipped && 
-    currentEquipState.rightHand.type != WeaponType::Shield;
- }
-          else
       {
-      // Shield in right hand - check left hand for weapon
-           hasWeaponToCheck = currentEquipState.leftHand.isEquipped && 
-   currentEquipState.leftHand.type != WeaponType::Shield;
-            }
+  bool hasWeaponToCheck = false;
+            
+     // Use DIRECT player check for weapon in other hand (more reliable than EquipManager state)
+         if (m_shieldInLeftHand)
+        {
+                // Shield in left hand - check right hand for weapon (using direct check)
+                bool directRightIsWeapon = rightEquipped && EquipManager::IsWeapon(rightEquipped);
+  hasWeaponToCheck = directRightIsWeapon;
+ }
+       else
+  {
+      // Shield in right hand - check left hand for weapon (using direct check)
+           bool directLeftIsWeapon = leftEquipped && EquipManager::IsWeapon(leftEquipped);
+           hasWeaponToCheck = directLeftIsWeapon;
+        }
     
     // Also check if we have a HIGGS-grabbed weapon
-            if (hasWeaponToCheck || rightHandHiggsGrabbed)
+       if (hasWeaponToCheck || weaponHandHiggsGrabbed)
     {
      m_wasContacting = m_weaponContactingShield;
         m_wasImminent = m_collisionImminent;
-                
+    
    ShieldCollisionResult collision;
-                bool detected = CheckWeaponShieldCollision(collision, rightHandHiggsGrabbed);
+        bool detected = CheckWeaponShieldCollision(collision, weaponHandHiggsGrabbed);
        
-         m_weaponContactingShield = collision.isColliding;
-          m_collisionImminent = collision.isImminent;
+  m_weaponContactingShield = collision.isColliding;
+       m_collisionImminent = collision.isImminent;
   
     if (m_weaponContactingShield)
-                {
+      {
 m_lastCollision = collision;
 
    // Fire callback if weapon just made contact
@@ -182,73 +186,75 @@ m_lastCollision = collision;
             m_collisionCallback(collision);
            }
        
-                    // Log collision event and notify VRInputHandler (only on initial contact)
+     // Log collision event and notify VRInputHandler (only on initial contact)
    if (!m_wasContacting)
-    {
+ {
          _MESSAGE("ShieldCollision: === WEAPON TOUCHING SHIELD === (HIGGS grabbed: %s)",
-  rightHandHiggsGrabbed ? "YES" : "NO");
-           _MESSAGE("  Collision Point: (%.2f, %.2f, %.2f)",
+  weaponHandHiggsGrabbed ? "YES" : "NO");
+_MESSAGE("  Collision Point: (%.2f, %.2f, %.2f)",
      collision.collisionPoint.x,
             collision.collisionPoint.y,
-           collision.collisionPoint.z);
+   collision.collisionPoint.z);
       _MESSAGE("  Distance: %.2f", collision.closestDistance);
-           
+   
      // Notify VRInputHandler for collision tracking
-  if (rightHandHiggsGrabbed)
+  if (weaponHandHiggsGrabbed)
       {
-             VRInputHandler::GetSingleton()->OnShieldCollisionDetected();
+    VRInputHandler::GetSingleton()->OnShieldCollisionDetected();
    }
         }
  }
          else if (m_collisionImminent)
-                {
-       m_lastCollision = collision;
+           {
+  m_lastCollision = collision;
      
           // Log imminent collision and trigger unequip (only when first detected, not already grabbed)
      // Also check cooldown - don't trigger if we just re-equipped (prevents rapid cycling when blades slide)
     // EXCEPTION: Backup threshold bypasses cooldown as a safety net
-  bool rightHandOnCooldown = VRInputHandler::GetSingleton()->IsHandOnCooldown(false);
+  bool weaponHandOnCooldown = VRInputHandler::GetSingleton()->IsHandOnCooldown(weaponHandIsLeft);
        bool withinBackupOnly = (collision.closestDistance <= shieldImminentThresholdBackup) && 
         (collision.closestDistance > m_imminentThreshold);
-       
-  if (!m_wasImminent && !m_wasContacting && !rightHandHiggsGrabbed && 
-     (!rightHandOnCooldown || withinBackupOnly))  // Backup threshold bypasses cooldown
-         {
+  
+  if (!m_wasImminent && !m_wasContacting && !weaponHandHiggsGrabbed && 
+     (!weaponHandOnCooldown || withinBackupOnly))  // Backup threshold bypasses cooldown
+    {
      // Check if we're in close combat mode - if so, don't trigger unequip
     if (VRInputHandler::GetSingleton()->IsInCloseCombatMode())
-            {
+      {
       static bool loggedCloseCombatSkip = false;
       if (!loggedCloseCombatSkip)
-             {
+           {
           _MESSAGE("ShieldCollision: Collision imminent but CLOSE COMBAT MODE active - skipping unequip");
-          loggedCloseCombatSkip = true;
+        loggedCloseCombatSkip = true;
              }
      }
   else
     {
-             static bool loggedCloseCombatSkip = false;
+           static bool loggedCloseCombatSkip = false;
    loggedCloseCombatSkip = false;
      
    _MESSAGE("ShieldCollision: WEAPON-SHIELD COLLISION IMMINENT!%s", withinBackupOnly ? " (BACKUP THRESHOLD - bypassing cooldown)" : "");
             _MESSAGE("  Distance: %.2f, Time to collision: %.3f sec",
-      collision.closestDistance,
+  collision.closestDistance,
      collision.timeToCollision);
    
-               // Unequip the RIGHT GAME hand weapon and have HIGGS grab it
-   // Note: ForceUnequipAndGrab takes GAME HAND, not VR controller
-      _MESSAGE("ShieldCollision: Triggering game RIGHT hand unequip + HIGGS grab to prevent collision!");
-  EquipManager::GetSingleton()->ForceUnequipAndGrab(false);// false = right GAME hand
+    // Unequip the WEAPON hand and have HIGGS grab it
+            // In right-handed mode: weapon = RIGHT game hand
+    // In left-handed mode: weapon = LEFT game hand
+   _MESSAGE("ShieldCollision: Triggering game %s hand unequip + HIGGS grab to prevent collision!",
+       weaponHandIsLeft ? "LEFT" : "RIGHT");
+  EquipManager::GetSingleton()->ForceUnequipAndGrab(weaponHandIsLeft);
         }
           }
-    else if (!m_wasImminent && !m_wasContacting && rightHandOnCooldown && !withinBackupOnly)
+    else if (!m_wasImminent && !m_wasContacting && weaponHandOnCooldown && !withinBackupOnly)
     {
      // Log that we skipped due to cooldown (only once per cooldown period)
-       static bool loggedCooldownSkip = false;
-          if (!loggedCooldownSkip)
-       {
-  _MESSAGE("ShieldCollision: Collision imminent but RIGHT hand on cooldown - allowing blade to slide against shield");
+   static bool loggedCooldownSkip = false;
+      if (!loggedCooldownSkip)
+  {
+  _MESSAGE("ShieldCollision: Collision imminent but %s hand on cooldown - allowing blade to slide against shield", weaponHandIsLeft ? "LEFT" : "RIGHT");
   loggedCooldownSkip = true;
-       }
+   }
       }
       }
         else
@@ -256,16 +262,16 @@ m_lastCollision = collision;
      // Weapon no longer contacting or imminent
         if (m_wasContacting)
             {
-          _MESSAGE("ShieldCollision: === WEAPON NO LONGER TOUCHING SHIELD === (HIGGS grabbed: %s)",
-      rightHandHiggsGrabbed ? "YES" : "NO");
+       _MESSAGE("ShieldCollision: === WEAPON NO LONGER TOUCHING SHIELD === (HIGGS grabbed: %s)",
+      weaponHandHiggsGrabbed ? "YES" : "NO");
  _MESSAGE("  Current distance: %.2f (threshold: %.2f)", 
-          collision.closestDistance, m_collisionThreshold);
+   collision.closestDistance, m_collisionThreshold);
      }
              
-             m_lastCollision.Clear();
-                }
+        m_lastCollision.Clear();
+   }
 }
-   else
+    else
             {
      m_weaponContactingShield = false;
         m_collisionImminent = false;
@@ -384,7 +390,7 @@ geometry.velocity.z = (geometry.centerPosition.z - geometry.prevCenterPosition.z
     // Shield Collision Detection
     // ============================================
 
-  bool ShieldCollisionTracker::CheckWeaponShieldCollision(ShieldCollisionResult& outResult, bool rightHandHiggsGrabbed)
+  bool ShieldCollisionTracker::CheckWeaponShieldCollision(ShieldCollisionResult& outResult, bool weaponHandHiggsGrabbed)
     {
         outResult.Clear();
         
@@ -393,22 +399,22 @@ return false;
         
         // Get shield geometry
         const ShieldGeometry& shield = m_shieldInLeftHand ? m_leftHandShield : m_rightHandShield;
-        if (!shield.isValid)
+   if (!shield.isValid)
             return false;
-        
-        // Get weapon geometry from WeaponGeometryTracker (right hand weapon vs left hand shield)
-        bool weaponIsLeftHand = !m_shieldInLeftHand;  // Weapon is in opposite hand from shield
+      
+      // Get weapon geometry from WeaponGeometryTracker (right hand weapon vs left hand shield)
+ bool weaponIsLeftHand = !m_shieldInLeftHand;  // Weapon is in opposite hand from shield
     const BladeGeometry& weapon = WeaponGeometryTracker::GetSingleton()->GetBladeGeometry(weaponIsLeftHand);
       
         // For HIGGS-grabbed weapon, use the HIGGS grabbed geometry if available
-        if (rightHandHiggsGrabbed && m_higgsGrabbedWeapon.isValid)
+        if (weaponHandHiggsGrabbed && m_higgsGrabbedWeapon.isValid)
         {
-            // Use the HIGGS grabbed weapon geometry instead
-         // (This would be updated separately)
+       // Use the HIGGS grabbed weapon geometry instead
+    // (This would be updated separately)
         }
   
-        if (!weapon.isValid)
-            return false;
+      if (!weapon.isValid)
+       return false;
         
         outResult.isLeftHandWeapon = weaponIsLeftHand;
  outResult.isLeftHandShield = m_shieldInLeftHand;

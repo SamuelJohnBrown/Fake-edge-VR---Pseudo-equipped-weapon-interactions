@@ -57,6 +57,7 @@ namespace FalseEdgeVR {
 	extern float shieldRadius;     // Shield face detection radius
 
 	// Shield bash settings
+	extern bool shieldBashEnabled;   // Enable/disable shield bash tracking feature
 	extern int shieldBashThreshold;              // Number of bashes required to trigger effect
 	extern float shieldBashWindow;      // Time window (seconds) to register bashes
 	extern float shieldBashLockoutDuration;      // Lockout duration (seconds) after triggering effect

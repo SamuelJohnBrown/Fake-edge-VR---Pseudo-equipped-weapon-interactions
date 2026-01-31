@@ -10,6 +10,8 @@
 #include "skse64/PluginAPI.h"
 #include <thread>
 #include <chrono>
+#include <unordered_map>
+#include <mutex>
 
 namespace FalseEdgeVR
 {
@@ -18,6 +20,12 @@ namespace FalseEdgeVR
   // Static member initialization
     bool EquipManager::s_suppressPickupSound = false;
     bool EquipManager::s_suppressDrawSound = false;
+
+    // Per-weapon draw cooldowns (prevent same weapon draw sound within cooldown after unequip)
+    // Key: weapon FormID, Value: time when weapon was UNEQUIPPED
+    static std::unordered_map<UInt32, std::chrono::steady_clock::time_point> s_lastUnequipTimes;
+    static std::mutex s_drawMutex;
+    static const int DRAW_SOUND_COOLDOWN_SECONDS = 5;
 
     // ============================================
     // Delayed Equip Weapon Task (runs on game thread)
@@ -150,7 +158,7 @@ namespace FalseEdgeVR
         
         // ============================================
         // NPC EQUIP TRACKING (within 1000 units of player)
-        // ============================================
+      // ============================================
    if (actor != *g_thePlayer && isEquipping)
         {
      PlayerCharacter* player = *g_thePlayer;
@@ -158,41 +166,41 @@ namespace FalseEdgeVR
     {
     // Calculate distance to player
        float dx = actor->pos.x - player->pos.x;
-       float dy = actor->pos.y - player->pos.y;
-      float dz = actor->pos.z - player->pos.z;
+   float dy = actor->pos.y - player->pos.y;
+    float dz = actor->pos.z - player->pos.z;
        float distance = sqrt(dx*dx + dy*dy + dz*dz);
           
-      // Only log and play sound if within 1000 units
+    // Only log and play sound if within 1000 units
  if (distance <= 1000.0f)
       {
           WeaponType type = EquipManager::GetWeaponType(item);
     const char* npcName = CALL_MEMBER_FN(actor, GetReferenceName)();
-           
+   
     // Cache sound FormIDs from Fake Edge VR.esp (ESL-flagged)
-             // Base FormIDs: Dagger=0x806, Sword=0x807, Axe=0x808, Mace=0x809
+           // Base FormIDs: Dagger=0x806, Sword=0x807, Axe=0x808, Mace=0x809
        static UInt32 cachedDaggerSound = 0;
 static UInt32 cachedSwordSound = 0;
-            static UInt32 cachedAxeSound = 0;
-                static UInt32 cachedMaceSound = 0;
+   static UInt32 cachedAxeSound = 0;
+             static UInt32 cachedMaceSound = 0;
      static bool soundsCached = false;
                 
      if (!soundsCached)
-          {
-          cachedDaggerSound = GetFullFormIdFromEspAndFormId("Fake Edge VR.esp", 0x806);
+      {
+  cachedDaggerSound = GetFullFormIdFromEspAndFormId("Fake Edge VR.esp", 0x806);
         cachedSwordSound = GetFullFormIdFromEspAndFormId("Fake Edge VR.esp", 0x807);
-        cachedAxeSound = GetFullFormIdFromEspAndFormId("Fake Edge VR.esp", 0x808);
+     cachedAxeSound = GetFullFormIdFromEspAndFormId("Fake Edge VR.esp", 0x808);
           cachedMaceSound = GetFullFormIdFromEspAndFormId("Fake Edge VR.esp", 0x809);
         soundsCached = true;
     _MESSAGE("EquipManager: Cached weapon draw sounds - Dagger:%08X, Sword:%08X, Axe:%08X, Mace:%08X",
-         cachedDaggerSound, cachedSwordSound, cachedAxeSound, cachedMaceSound);
+       cachedDaggerSound, cachedSwordSound, cachedAxeSound, cachedMaceSound);
      }
-           
+      
   switch (type)
-           {
+     {
     case WeaponType::Dagger:
     _MESSAGE(">>> NPC EQUIPPED: DAGGER - NPC: %s (RefID: %08X), Distance: %.1f units, WeaponID: %08X",
     npcName ? npcName : "Unknown", actor->formID, distance, item->formID);
-        if (cachedDaggerSound != 0)
+   if (cachedDaggerSound != 0)
    PlaySoundAtActor(cachedDaggerSound, actor);
    break;
    case WeaponType::Sword:
@@ -202,20 +210,20 @@ static UInt32 cachedSwordSound = 0;
        PlaySoundAtActor(cachedSwordSound, actor);
    break;
   case WeaponType::Mace:
-    _MESSAGE(">>> NPC EQUIPPED: 1H MACE - NPC: %s (RefID: %08X), Distance: %.1f units, WeaponID: %08X",
+  _MESSAGE(">>> NPC EQUIPPED: 1H MACE - NPC: %s (RefID: %08X), Distance: %.1f units, WeaponID: %08X",
   npcName ? npcName : "Unknown", actor->formID, distance, item->formID);
    if (cachedMaceSound != 0)
        PlaySoundAtActor(cachedMaceSound, actor);
-         break;
+   break;
 case WeaponType::Axe:
-     _MESSAGE(">>> NPC EQUIPPED: 1H AXE - NPC: %s (RefID: %08X), Distance: %.1f units, WeaponID: %08X",
-        npcName ? npcName : "Unknown", actor->formID, distance, item->formID);
+ _MESSAGE(">>> NPC EQUIPPED: 1H AXE - NPC: %s (RefID: %08X), Distance: %.1f units, WeaponID: %08X",
+  npcName ? npcName : "Unknown", actor->formID, distance, item->formID);
         if (cachedAxeSound != 0)
-               PlaySoundAtActor(cachedAxeSound, actor);
+   PlaySoundAtActor(cachedAxeSound, actor);
       break;
  default:
       break;
-     }
+ }
   }
  }
      return kEvent_Continue;
@@ -229,7 +237,7 @@ case WeaponType::Axe:
 
      _MESSAGE("EquipEventHandler: Received equip event for FormID %08X, equipped=%d", evn->baseObject, evn->equipped);
 
-     // Determine which hand based on the equipped flag
+     // Determining which hand based on the equipped flag
      
         // Get the actual hand from the currently equipped objects
      bool isLeftHand = false;
@@ -487,34 +495,53 @@ cachedMaceSound = GetFullFormIdFromEspAndFormId("Fake Edge VR.esp", 0x809);
         
      // Log specific weapon types and play draw sounds (unless suppressed by collision logic or excluded weapons)
  bool shouldExclude = IsExcludedItem(item->formID);
-   switch (type)
+ 
+ // Check draw sound cooldown (5 seconds from last unequip of same weapon)
+ bool onDrawCooldown = false;
+ {
+     std::lock_guard<std::mutex> lock(s_drawMutex);
+     auto it = s_lastUnequipTimes.find(item->formID);
+  if (it != s_lastUnequipTimes.end())
      {
-        case WeaponType::Dagger:
-      _MESSAGE(">>> PLAYER EQUIPPED: DAGGER (FormID: %08X) in %s hand", item->formID, handName);
-   if (!s_suppressDrawSound && !shouldExclude && cachedDaggerSound != 0)
+         auto now = std::chrono::steady_clock::now();
+       auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(now - it->second).count();
+ if (elapsed < DRAW_SOUND_COOLDOWN_SECONDS)
+  {
+          onDrawCooldown = true;
+             _MESSAGE("EquipManager: Draw sound on cooldown for %08X (%lld/%d seconds since unequip)", 
+        item->formID, elapsed, DRAW_SOUND_COOLDOWN_SECONDS);
+      }
+     }
+ }
+ 
+ switch (type)
+ {
+ case WeaponType::Dagger:
+     _MESSAGE(">>> PLAYER EQUIPPED: DAGGER (FormID: %08X) in %s hand", item->formID, handName);
+     if (!s_suppressDrawSound && !shouldExclude && !onDrawCooldown && cachedDaggerSound != 0)
   PlaySoundAtPlayer(cachedDaggerSound);
-    break;
-  case WeaponType::Sword:
-       _MESSAGE(">>> PLAYER EQUIPPED: 1H SWORD (FormID: %08X) in %s hand", item->formID, handName);
-   if (!s_suppressDrawSound && !shouldExclude && cachedSwordSound != 0)
-    PlaySoundAtPlayer(cachedSwordSound);
-  break;
-     case WeaponType::Mace:
- _MESSAGE(">>> PLAYER EQUIPPED: 1H MACE (FormID: %08X) in %s hand", item->formID, handName);
- if (!s_suppressDrawSound && !shouldExclude && cachedMaceSound != 0)
-  PlaySoundAtPlayer(cachedMaceSound);
      break;
-  case WeaponType::Axe:
-   _MESSAGE(">>> PLAYER EQUIPPED: 1H AXE (FormID: %08X) in %s hand", item->formID, handName);
-  if (!s_suppressDrawSound && !shouldExclude && cachedAxeSound != 0)
-      PlaySoundAtPlayer(cachedAxeSound);
+ case WeaponType::Sword:
+ _MESSAGE(">>> PLAYER EQUIPPED: 1H SWORD (FormID: %08X) in %s hand", item->formID, handName);
+     if (!s_suppressDrawSound && !shouldExclude && !onDrawCooldown && cachedSwordSound != 0)
+         PlaySoundAtPlayer(cachedSwordSound);
      break;
-  case WeaponType::Shield:
- _MESSAGE(">>> PLAYER EQUIPPED: SHIELD (FormID: %08X) in %s hand", item->formID, handName);
-         break;
-            default:
+ case WeaponType::Mace:
+     _MESSAGE(">>> PLAYER EQUIPPED: 1H MACE (FormID: %08X) in %s hand", item->formID, handName);
+     if (!s_suppressDrawSound && !shouldExclude && !onDrawCooldown && cachedMaceSound != 0)
+         PlaySoundAtPlayer(cachedMaceSound);
      break;
-  }
+ case WeaponType::Axe:
+     _MESSAGE(">>> PLAYER EQUIPPED: 1H AXE (FormID: %08X) in %s hand", item->formID, handName);
+     if (!s_suppressDrawSound && !shouldExclude && !onDrawCooldown && cachedAxeSound != 0)
+         PlaySoundAtPlayer(cachedAxeSound);
+     break;
+ case WeaponType::Shield:
+     _MESSAGE(">>> PLAYER EQUIPPED: SHIELD (FormID: %08X) in %s hand", item->formID, handName);
+     break;
+ default:
+     break;
+ }
  
         if (s_suppressDrawSound)
         {
@@ -530,32 +557,41 @@ cachedMaceSound = GetFullFormIdFromEspAndFormId("Fake Edge VR.esp", 0x809);
     void EquipManager::OnUnequip(TESForm* item, Actor* actor, bool isLeftHand)
     {
       if (!item)
-            return;
+   return;
 
-     WeaponType type = GetWeaponType(item);
+        WeaponType type = GetWeaponType(item);
         const char* typeName = GetWeaponTypeName(type);
         const char* handName = isLeftHand ? "Left" : "Right";
 
- EquippedWeapon& hand = isLeftHand ? m_equipState.leftHand : m_equipState.rightHand;
-        hand.Clear();
+     EquippedWeapon& hand = isLeftHand ? m_equipState.leftHand : m_equipState.rightHand;
+    hand.Clear();
 
-        _MESSAGE("EquipManager: UNEQUIPPED %s from %s hand (FormID: %08X)", typeName, handName, item->formID);
+   _MESSAGE("EquipManager: UNEQUIPPED %s from %s hand (FormID: %08X)", typeName, handName, item->formID);
         
-        if (m_equipState.HasOneWeaponEquipped())
-      {
- const char* remainingHand = m_equipState.leftHand.isEquipped ? "Left" : "Right";
-            WeaponType remainingType = m_equipState.leftHand.isEquipped 
-     ? m_equipState.leftHand.type 
-        : m_equipState.rightHand.type;
-            
-      _MESSAGE("EquipManager: Player now has SINGLE weapon equipped - %s in %s hand", 
-        GetWeaponTypeName(remainingType), remainingHand);
+        // Record unequip time for draw sound cooldown
+        // Only track weapons (not shields)
+        if (type != WeaponType::Shield && type != WeaponType::None)
+        {
+    std::lock_guard<std::mutex> lock(s_drawMutex);
+      s_lastUnequipTimes[item->formID] = std::chrono::steady_clock::now();
+   _MESSAGE("EquipManager: Recorded unequip time for weapon %08X (5s draw sound cooldown started)", item->formID);
         }
         
+        if (m_equipState.HasOneWeaponEquipped())
+        {
+            const char* remainingHand = m_equipState.leftHand.isEquipped ? "Left" : "Right";
+            WeaponType remainingType = m_equipState.leftHand.isEquipped 
+        ? m_equipState.leftHand.type 
+                : m_equipState.rightHand.type;
+            
+      _MESSAGE("EquipManager: Player now has SINGLE weapon equipped - %s in %s hand", 
+       GetWeaponTypeName(remainingType), remainingHand);
+        }
+   
         LogEquipmentState();
         
-        // Update VR input handler grab listening
-   VRInputHandler::GetSingleton()->UpdateGrabListening();
+     // Update VR input handler grab listening
+        VRInputHandler::GetSingleton()->UpdateGrabListening();
     }
 
     void EquipManager::LogEquipmentState()
@@ -785,7 +821,7 @@ TESObjectARMO* armor = DYNAMIC_CAST(form, TESForm, TESObjectARMO);
         // Unequip the item (silent - no sound, no message)
   CALL_MEMBER_FN(equipManager, UnequipItem)(player, item, equipList, 1, equipSlot, false, true, true, false, NULL);
 
-    _MESSAGE("EquipManager: Force unequip command sent for %s hand (silent)", isLeftHand ? "Left" : "Right");
+    _MESSAGE("EquipManager: Force unaquip command sent for %s hand (silent)", isLeftHand ? "Left" : "Right");
     }
 
     void EquipManager::ForceUnequipLeftHand()
@@ -916,7 +952,17 @@ _MESSAGE("EquipManager::ForceReequipHand - No cached weapon FormID for %s hand!"
         {
    _MESSAGE("EquipManager::ForceUnequipAndGrab - SAME WEAPON in both hands (FormID: %08X)", item->formID);
         _MESSAGE("EquipManager::ForceUnequipAndGrab - Using special handling for duplicate weapons");
-        }
+  }
+        
+        // Track if we were dual-wielding same weapon (for cleanup after re-equip)
+    if (isLeftGameHand)
+  {
+     m_wasDualWieldingSameWeaponLeft = bothHandsSameWeapon;
+  }
+        else
+   {
+   m_wasDualWieldingSameWeaponRight = bothHandsSameWeapon;
+  }
         
         // Cache the FormID for later re-equip (use correct cache for each GAME hand)
         if (isLeftGameHand)
@@ -991,29 +1037,14 @@ _MESSAGE("EquipManager::ForceReequipHand - No cached weapon FormID for %s hand!"
         {
           _MESSAGE("EquipManager::ForceUnequipAndGrab - No equip list found for %s hand!", 
 isLeftGameHand ? "Left" : "Right");
-          _MESSAGE("EquipManager::ForceUnequipAndGrab - leftEquipList: %p, rightEquipList: %p", 
+    _MESSAGE("EquipManager::ForceUnequipAndGrab - leftEquipList: %p, rightEquipList: %p", 
              leftEquipList, rightEquipList);
   
-            // If both hands have same weapon and we couldn't get the equip list,
-      // try the other list as a fallback
-            if (bothHandsSameWeapon)
-            {
-       BaseExtraList* fallbackList = isLeftGameHand ? rightEquipList : leftEquipList;
-if (fallbackList)
-          {
-        _MESSAGE("EquipManager::ForceUnequipAndGrab - Using fallback equip list from other hand");
-                    equipList = fallbackList;
-             }
-     else
-        {
-      _MESSAGE("EquipManager::ForceUnequipAndGrab - No fallback available, aborting");
-    return;
-         }
-            }
-    else
-    {
-          return;
- }
+// If we couldn't get the equip list for the requested hand, we cannot safely unequip
+ // Using the other hand's equip list would unequip the WRONG weapon!
+            // This can happen with same weapon in both hands - just abort
+    _MESSAGE("EquipManager::ForceUnequipAndGrab - Cannot get correct equip list, aborting to prevent wrong weapon unequip");
+       return;
         }
 
 BSExtraData* xCannotWear = equipList->GetByType(kExtraData_CannotWear);
@@ -1156,13 +1187,18 @@ else
         if (isLeftHand)
         {
     m_cachedWeaponFormIDLeft = 0;
-            _MESSAGE("EquipManager: Cleared cached weapon FormID for LEFT hand");
+   _MESSAGE("EquipManager: Cleared cached weapon FormID for LEFT hand");
         }
-     else
+  else
         {
         m_cachedWeaponFormIDRight = 0;
    _MESSAGE("EquipManager: Cleared cached weapon FormID for RIGHT hand");
-        }
+     }
+    }
+
+  bool EquipManager::WasDualWieldingSameWeapon(bool isLeftHand) const
+    {
+        return isLeftHand ? m_wasDualWieldingSameWeaponLeft : m_wasDualWieldingSameWeaponRight;
     }
 
     // ============================================

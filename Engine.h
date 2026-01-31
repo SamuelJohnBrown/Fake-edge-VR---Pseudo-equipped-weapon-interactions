@@ -58,6 +58,15 @@ namespace FalseEdgeVR
 	// This prevents the item from being flagged as stolen when picked up
 	void SetOwnerToPlayer(TESObjectREFR* objRef);
 
+	// Delete a spawned world object (removes it from the world)
+	// Used to clean up PlaceAtMe spawned objects that are no longer needed
+	void DeleteWorldObject(TESObjectREFR* objRef);
+
+	// Remove an item from player inventory after a short delay
+	// This is used to clean up the duplicate spawned weapon after activation
+	// Only removes 1 item and won't remove equipped items
+	void DelayedRemoveItemFromInventory(UInt32 itemFormId, int delayMs = 100);
+
 	// ============================================
 	// Blocking (X-Pose)
 	// ============================================

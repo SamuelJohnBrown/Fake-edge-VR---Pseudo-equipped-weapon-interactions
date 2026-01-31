@@ -3,11 +3,13 @@
 #include "VRInputHandler.h"
 #include "WeaponGeometry.h"
 #include "ShieldCollision.h"
-
+#include "skse64/GameObjects.h"
 #include <skse64/PapyrusActor.cpp>
 #include "skse64/GameRTTI.h"
 #include "skse64/PapyrusVM.h"
 #include "skse64/GameExtraData.h"
+#include <thread>
+#include <chrono>
 
 namespace FalseEdgeVR
 {
@@ -210,6 +212,256 @@ namespace FalseEdgeVR
 		{
 			_MESSAGE("[SetOwner] ERROR: Failed to create ExtraOwnership");
 		}
+	}
+
+	// ============================================
+	// Delete World Object (cleanup spawned items)
+	// ============================================
+	
+	// Papyrus ObjectReference.Delete function signature
+	typedef void (*_DeleteObject)(VMClassRegistry* registry, UInt32 stackId, TESObjectREFR* obj);
+	static RelocAddr<_DeleteObject> DeleteObject_Native(0x009CE380);
+
+	void DeleteWorldObject(TESObjectREFR* objRef)
+	{
+		if (!objRef)
+		{
+			_MESSAGE("[DeleteWorldObject] ERROR: Object reference is null");
+			return;
+		}
+
+		_MESSAGE("[DeleteWorldObject] Deleting world object RefID: %08X", objRef->formID);
+		
+		// Call the Papyrus Delete function
+		DeleteObject_Native((*g_skyrimVM)->GetClassRegistry(), 0, objRef);
+		
+		_MESSAGE("[DeleteWorldObject] Delete command sent for RefID: %08X", objRef->formID);
+	}
+
+	// ============================================
+	// Delayed Item Removal (cleanup spawned weapon duplicates)
+	// ============================================
+	
+	// Task to check and re-equip weapons after removal has been processed
+	// Must be defined BEFORE DelayedRemoveItemTask since it uses this class
+	class DelayedReequipCheckTask : public TaskDelegate
+	{
+	public:
+		UInt32 m_itemFormId;
+		bool m_leftHadWeapon;
+		bool m_rightHadWeapon;
+
+		DelayedReequipCheckTask(UInt32 itemFormId, bool leftHad, bool rightHad) 
+			: m_itemFormId(itemFormId), m_leftHadWeapon(leftHad), m_rightHadWeapon(rightHad) {}
+
+		virtual void Run() override
+		{
+			PlayerCharacter* player = *g_thePlayer;
+			if (!player)
+			{
+				_MESSAGE("[ReequipCheck] ERROR: Player not available");
+				return;
+			}
+
+			TESForm* itemForm = LookupFormByID(m_itemFormId);
+			if (!itemForm)
+			{
+				_MESSAGE("[ReequipCheck] ERROR: Item form %08X not found", m_itemFormId);
+				return;
+			}
+
+			// Check what's equipped NOW (after the removal was processed)
+			TESForm* leftEquippedAfter = player->GetEquippedObject(true);
+			TESForm* rightEquippedAfter = player->GetEquippedObject(false);
+			
+			bool leftStillHasWeapon = (leftEquippedAfter && leftEquippedAfter->formID == m_itemFormId);
+			bool rightStillHasWeapon = (rightEquippedAfter && rightEquippedAfter->formID == m_itemFormId);
+			
+			_MESSAGE("[ReequipCheck] After removal processed - Left equipped: %s, Right equipped: %s",
+				leftStillHasWeapon ? "YES" : "NO", rightStillHasWeapon ? "YES" : "NO");
+			
+			::EquipManager* equipMan = ::EquipManager::GetSingleton();
+			if (equipMan)
+			{
+				// Check LEFT hand
+				if (m_leftHadWeapon && !leftStillHasWeapon)
+				{
+					_MESSAGE("[ReequipCheck] LEFT hand weapon was unequipped - re-equipping!");
+					BGSEquipSlot* leftSlot = GetLeftHandSlot();
+					FalseEdgeVR::EquipManager::s_suppressDrawSound = true;
+					
+					// Temporarily strip enchantment to prevent enchant VFX/sound
+					TESObjectWEAP* weap = DYNAMIC_CAST(itemForm, TESForm, TESObjectWEAP);
+					EnchantmentItem* cachedEnchant = nullptr;
+					if (weap && weap->enchantable.enchantment)
+					{
+						cachedEnchant = weap->enchantable.enchantment;
+						weap->enchantable.enchantment = nullptr;
+					}
+
+					CALL_MEMBER_FN(equipMan, EquipItem)(player, itemForm, nullptr, 1, leftSlot, false, true, false, nullptr);
+
+					// Restore enchantment immediately
+					if (weap && cachedEnchant)
+					{
+						weap->enchantable.enchantment = cachedEnchant;
+					}
+					
+					FalseEdgeVR::EquipManager::s_suppressDrawSound = false;
+					_MESSAGE("[ReequipCheck] Re-equipped weapon to LEFT hand (silent)");
+				}
+				
+				// Check RIGHT hand
+				if (m_rightHadWeapon && !rightStillHasWeapon)
+				{
+					_MESSAGE("[ReequipCheck] RIGHT hand weapon was unequipped - re-equipping!");
+					BGSEquipSlot* rightSlot = GetRightHandSlot();
+					FalseEdgeVR::EquipManager::s_suppressDrawSound = true;
+					// Temporarily strip enchantment to prevent enchant VFX/sound
+					TESObjectWEAP* weap2 = DYNAMIC_CAST(itemForm, TESForm, TESObjectWEAP);
+					EnchantmentItem* cachedEnchant2 = nullptr;
+					if (weap2 && weap2->enchantable.enchantment)
+					{
+						cachedEnchant2 = weap2->enchantable.enchantment;
+						weap2->enchantable.enchantment = nullptr;
+					}
+
+					CALL_MEMBER_FN(equipMan, EquipItem)(player, itemForm, nullptr, 1, rightSlot, false, true, false, nullptr);
+
+					// Restore enchantment immediately
+					if (weap2 && cachedEnchant2)
+					{
+						weap2->enchantable.enchantment = cachedEnchant2;
+					}
+					FalseEdgeVR::EquipManager::s_suppressDrawSound = false;
+					_MESSAGE("[ReequipCheck] Re-equipped weapon to RIGHT hand (silent)");
+				}
+			}
+		}
+
+		virtual void Dispose() override
+		{
+			delete this;
+		}
+	};
+
+	// Task to remove item from player inventory on game thread
+	class DelayedRemoveItemTask : public TaskDelegate
+	{
+	public:
+		UInt32 m_itemFormId;
+
+		DelayedRemoveItemTask(UInt32 itemFormId) : m_itemFormId(itemFormId) {}
+
+		virtual void Run() override
+		{
+			PlayerCharacter* player = *g_thePlayer;
+			if (!player)
+			{
+				_MESSAGE("[DelayedRemove] ERROR: Player not available");
+				return;
+			}
+
+			TESForm* itemForm = LookupFormByID(m_itemFormId);
+			if (!itemForm)
+			{
+				_MESSAGE("[DelayedRemove] ERROR: Item form %08X not found", m_itemFormId);
+				return;
+			}
+
+			// Check what the player currently has equipped BEFORE removal
+			TESForm* leftEquippedBefore = player->GetEquippedObject(true);
+			TESForm* rightEquippedBefore = player->GetEquippedObject(false);
+			
+			bool leftHadWeapon = (leftEquippedBefore && leftEquippedBefore->formID == m_itemFormId);
+			bool rightHadWeapon = (rightEquippedBefore && rightEquippedBefore->formID == m_itemFormId);
+			
+			_MESSAGE("[DelayedRemove] Before removal - Left equipped: %s, Right equipped: %s",
+				leftHadWeapon ? "YES" : "NO", rightHadWeapon ? "YES" : "NO");
+
+			// Get container changes to check inventory
+			ExtraContainerChanges* containerChanges = static_cast<ExtraContainerChanges*>(
+				player->extraData.GetByType(kExtraData_ContainerChanges));
+			
+			if (!containerChanges || !containerChanges->data)
+			{
+				_MESSAGE("[DelayedRemove] No container changes data");
+				return;
+			}
+
+			// Find the inventory entry for this item
+			InventoryEntryData* entryData = containerChanges->data->FindItemEntry(itemForm);
+			if (!entryData)
+			{
+				_MESSAGE("[DelayedRemove] Item %08X not found in inventory", m_itemFormId);
+				return;
+			}
+
+			// Count how many are equipped (could be 0, 1, or 2 if dual-wielding same weapon)
+			int equippedCount = 0;
+			if (leftHadWeapon) equippedCount++;
+			if (rightHadWeapon) equippedCount++;
+
+			// Get total count in inventory
+			int totalCount = entryData->countDelta;
+			
+			// Only remove if we have MORE than what's equipped
+			if (totalCount > equippedCount)
+			{
+				_MESSAGE("[DelayedRemove] Removing 1x %08X from inventory (total: %d, equipped: %d)", 
+					m_itemFormId, totalCount, equippedCount);
+				RemoveItemFromInventory(player, itemForm, 1, true);
+				
+				// Schedule a follow-up task to check and re-equip after the game processes the removal
+				// We need a small delay to let the unequip event fire
+				extern SKSETaskInterface* g_task;
+				if (g_task)
+				{
+					g_task->AddTask(new DelayedReequipCheckTask(m_itemFormId, leftHadWeapon, rightHadWeapon));
+					_MESSAGE("[DelayedRemove] Scheduled re-equip check task");
+				}
+			}
+			else
+			{
+				_MESSAGE("[DelayedRemove] NOT removing %08X - would remove equipped item (total: %d, equipped: %d)", 
+					m_itemFormId, totalCount, equippedCount);
+			}
+		}
+
+		virtual void Dispose() override
+		{
+			delete this;
+		}
+	};
+
+	// Thread function to delay then queue the removal task
+	static void DelayedRemoveItemThread(UInt32 itemFormId, int delayMs)
+	{
+		std::this_thread::sleep_for(std::chrono::milliseconds(delayMs));
+		
+		extern SKSETaskInterface* g_task;
+		if (g_task)
+		{
+			g_task->AddTask(new DelayedRemoveItemTask(itemFormId));
+			_MESSAGE("[DelayedRemove] Queued item removal after %dms delay for item %08X", delayMs, itemFormId);
+		}
+		else
+		{
+			_MESSAGE("[DelayedRemove] ERROR: g_task not available!");
+		}
+	}
+
+	void DelayedRemoveItemFromInventory(UInt32 itemFormId, int delayMs)
+	{
+		if (itemFormId == 0)
+		{
+			_MESSAGE("[DelayedRemove] ERROR: Invalid itemFormId 0");
+			return;
+		}
+
+		// Start a detached thread to handle the delay
+		std::thread(DelayedRemoveItemThread, itemFormId, delayMs).detach();
+		_MESSAGE("[DelayedRemove] Started delayed removal thread for item %08X (delay: %dms)", itemFormId, delayMs);
 	}
 
 	// ============================================
