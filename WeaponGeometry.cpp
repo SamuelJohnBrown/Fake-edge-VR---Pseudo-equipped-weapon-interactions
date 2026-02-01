@@ -312,29 +312,42 @@ m_collisionCallback(collision);
       {
      static bool loggedCloseCombatSkip = false;
   if (!loggedCloseCombatSkip)
-                 {
+    {
 _MESSAGE("WeaponGeometry: Collision imminent but CLOSE COMBAT MODE active - skipping unequip");
-          loggedCloseCombatSkip = true;
-                  }
-  }
-     else
+       loggedCloseCombatSkip = true;
+ }
+   }
+      // Check if trigger is held on EITHER controller - if so, don't trigger unequip
+        else if (VRInputHandler::IsLeftTriggerPressed() || VRInputHandler::IsRightTriggerPressed())
      {
-         static bool loggedCloseCombatSkip = false;
-     loggedCloseCombatSkip = false;
+  static bool loggedTriggerSkip = false;
+ if (!loggedTriggerSkip)
+     {
+      _MESSAGE("WeaponGeometry: Collision imminent but TRIGGER HELD - skipping unequip (weapon stays equipped)");
+   loggedTriggerSkip = true;
+        }
+    }
+   else
+        {
+        // Reset log flags
+static bool loggedCloseCombatSkip = false;
+ loggedCloseCombatSkip = false;
+        static bool loggedTriggerSkip = false;
+   loggedTriggerSkip = false;
     
-_MESSAGE("WeaponGeometry: COLLISION IMMINENT!%s", withinBackupOnly ? " (BACKUP THRESHOLD - bypassing cooldown)" : "");
-   _MESSAGE("  Distance: %.2f, Time to collision: %.3f sec",
-collision.closestDistance,
-  collision.timeToCollision);
+     _MESSAGE("WeaponGeometry: COLLISION IMMINENT!%s", withinBackupOnly ? " (BACKUP THRESHOLD - bypassing cooldown)" : "");
+    _MESSAGE("  Distance: %.2f, Time to collision: %.3f sec",
+         collision.closestDistance,
+collision.timeToCollision);
  
-      // Unequip the OFF-HAND weapon and have HIGGS grab it
-      // In right-handed mode: off-hand = LEFT game hand
+       // Unequip the OFF-HAND weapon and have HIGGS grab it
+     // In right-handed mode: off-hand = LEFT game hand
       // In left-handed mode: off-hand = RIGHT game hand
-      bool offHandIsLeft = !IsLeftHandedMode();  // Left game hand is off-hand in right-handed mode
-      _MESSAGE("WeaponGeometry: Triggering game %s hand unequip + HIGGS grab to prevent collision!", 
-          offHandIsLeft ? "LEFT" : "RIGHT");
-      EquipManager::GetSingleton()->ForceUnequipAndGrab(offHandIsLeft);
-     }
+ bool offHandIsLeft = !IsLeftHandedMode();  // Left game hand is off-hand in right-handed mode
+   _MESSAGE("WeaponGeometry: Triggering game %s hand unequip + HIGGS grab to prevent collision!", 
+     offHandIsLeft ? "LEFT" : "RIGHT");
+ EquipManager::GetSingleton()->ForceUnequipAndGrab(offHandIsLeft);
+  }
    }
         else if (!m_wasImminent && !m_wasInContact && offHandOnCooldown && !withinBackupOnly && !inGracePeriod)
  {
@@ -1219,7 +1232,7 @@ float leftForwardDot = leftDir.x * playerForward.x + leftDir.y * playerForward.y
          _MESSAGE("  Blade angle: %.1f degrees (crossing: %s)", bladeAngle, isCrossing ? "YES" : "NO");
    _MESSAGE("  Left pointing up: %s (z=%.2f), Right pointing up: %s (z=%.2f)",
  leftPointingUp ? "YES" : "NO", leftDir.z,
-      rightPointingUp ? "YES" : "NO", rightDir.z);
+      rightPointingUp ? "YES" : "NO" , rightDir.z);
   _MESSAGE("  Facing forward: %s (leftDot=%.2f, rightDot=%.2f)",
  facingForward ? "YES" : "NO", leftForwardDot, rightForwardDot);
       _MESSAGE("WeaponGeometry: *** X-POSE DETECTED! *** Blades crossed facing forward!");
@@ -1233,7 +1246,7 @@ float leftForwardDot = leftDir.x * playerForward.x + leftDir.y * playerForward.y
   _MESSAGE("  Blade angle: %.1f degrees (crossing: %s)", bladeAngle, isCrossing ? "YES" : "NO");
        _MESSAGE("  Left pointing up: %s (z=%.2f), Right pointing up: %s (z=%.2f)",
      leftPointingUp ? "YES" : "NO", leftDir.z,
-   rightPointingUp ? "YES" : "NO", rightDir.z);
+   rightPointingUp ? "YES" : "NO" , rightDir.z);
   _MESSAGE("  Facing forward: %s (leftDot=%.2f, rightDot=%.2f)",
  facingForward ? "YES" : "NO", leftForwardDot, rightForwardDot);
      

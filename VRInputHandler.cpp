@@ -4,10 +4,14 @@
 #include "ShieldCollision.h"
 #include "ActivateHook.h"
 #include "skse64/GameReferences.h"
+#include "skse64/GameVR.h"
 #include <chrono>
 
 namespace FalseEdgeVR
 {
+    // Forward declaration for trigger polling
+    void PollTriggerState();
+    
     // ============================================
     // VRInputHandler Implementation
     // ============================================
@@ -27,6 +31,9 @@ namespace FalseEdgeVR
 
         // Register HIGGS callbacks if HIGGS is available
         RegisterHiggsCallbacks();
+
+        // Trigger button tracking initialization
+        RegisterTriggerCallback();
 
         m_initialized = true;
         _MESSAGE("VRInputHandler: Initialized successfully");
@@ -128,10 +135,13 @@ namespace FalseEdgeVR
         
         // Log once to confirm callback is working
      if (!loggedOnce)
-        {
+     {
     _MESSAGE("VRInputHandler::OnPrePhysicsStep - Callback is firing! Frame: %d", frameCount);
-            loggedOnce = true;
-        }
+ loggedOnce = true;
+}
+    
+        // Poll trigger button state each frame
+   PollTriggerState();
     
   // Log every 500 frames to confirm still running
         if (frameCount % 500 == 0)
@@ -897,7 +907,7 @@ NiPoint3 handPos = handNode->m_worldTransform.pos;
 {
         _MESSAGE("VRInputHandler: Untracked weapon dropped (not managed by FalseEdgeVR)");
   }
-  }
+}
 
     void VRInputHandler::OnPulled(bool isLeftVRController, TESObjectREFR* pulledRefr)
     {
@@ -933,7 +943,7 @@ VRInputHandler* handler = GetSingleton();
         // Convert VR controller to game hand
         bool isLeftGameHand = VRControllerToGameHand(isLeftVRController);
 
-// Check if this is a collision involving our grabbed weapon
+        // Check if this is a collision involving our grabbed weapon
         if (EquipManager::GetSingleton()->HasPendingReequip(isLeftGameHand))
         {
             handler->OnHiggsCollisionDetected(isLeftGameHand);
@@ -968,7 +978,6 @@ VRInputHandler* handler = GetSingleton();
 
         // Shield bash detection: collision from weapon hand while shield hand has shield
     // The collision comes from the weapon hitting the shield
-        // isLeftGameHand from the callback tells us which game hand the collision came from
         bool collisionFromWeaponHand = (isLeftGameHand == weaponHandIsLeft);
         if (collisionFromWeaponHand && hasShield && (weaponHandHasWeapon || weaponHandGrabbedWeapon) && separatingVelocity > 3.0f)
         {
@@ -1034,6 +1043,69 @@ VRInputHandler* handler = GetSingleton();
             m_wasHiggsCollisionActive = false;
             m_timeSinceLastCollision = 0.0f;
             return;
+        }
+
+     // TRIGGER OVERRIDE: If trigger is held on EITHER hand, immediately re-equip the weapon
+  // This allows the player to force the weapon back to equipped state
+    bool leftTrig = IsLeftTriggerPressed();
+        bool rightTrig = IsRightTriggerPressed();
+        
+        if (leftTrig || rightTrig)
+        {
+ TESObjectREFR* triggerDroppedWeapon = EquipManager::GetSingleton()->GetDroppedWeaponRef(offHandIsLeft);
+          if (triggerDroppedWeapon && triggerDroppedWeapon->baseForm)
+    {
+     _MESSAGE("VRInputHandler: TRIGGER HELD - forcing immediate re-equip of grabbed weapon (Left=%s, Right=%s)",
+    leftTrig ? "YES" : "NO", rightTrig ? "YES" : "NO");
+            
+    // Check if this was a dual-wield same weapon situation
+ bool wasDualWieldingSame = EquipManager::GetSingleton()->WasDualWieldingSameWeapon(offHandIsLeft);
+
+      if (wasDualWieldingSame)
+   {
+          // For dual-wield same weapon: DON'T activate (which would add duplicate to inventory)
+       // The re-equip will use the existing inventory item via cached FormID
+           _MESSAGE("VRInputHandler: Dual-wield same weapon - SKIPPING activation (will re-equip from existing inventory)");
+        _MESSAGE("VRInputHandler: Deleting spawned weapon (RefID: %08X) from world", triggerDroppedWeapon->formID);
+         
+     // Delete the spawned world object so it doesn't accumulate on the ground
+ DeleteWorldObject(triggerDroppedWeapon);
+      }
+      else
+        {
+    // Normal case (different weapons): activate to add to inventory
+         _MESSAGE("VRInputHandler: Activating grabbed weapon to add to inventory (RefID: %08X, BaseID: %08X)...",
+              triggerDroppedWeapon->formID, triggerDroppedWeapon->baseForm->formID);
+      
+            PlayerCharacter* player = *g_thePlayer;
+        if (player)
+     {
+          // Suppress pickup sound during internal re-equip
+       EquipManager::s_suppressPickupSound = true;
+           bool activated = SafeActivate(triggerDroppedWeapon, player, 0, 0, 1, false);
+          EquipManager::s_suppressPickupSound = false;
+     _MESSAGE("VRInputHandler: Activate result: %s", activated ? "SUCCESS" : "FAILED");
+             }
+       }
+          
+     // Clear the dropped weapon ref but KEEP the cached FormID for re-equip!
+ EquipManager::GetSingleton()->ClearDroppedWeaponRef(offHandIsLeft);
+   
+      // Also clear PendingReequip so CheckCollisionTimeout doesn't clear cached FormID
+      EquipManager::GetSingleton()->ClearPendingReequip(offHandIsLeft);
+   
+         m_pendingReequip = true;
+          m_pendingReequipIsLeft = offHandIsLeft;
+          m_pendingReequipTimer = 0.0f;
+  _MESSAGE("VRInputHandler: Scheduled re-equip for %s hand in %.1f ms (TRIGGER OVERRIDE)", 
+           offHandIsLeft ? "left" : "right", reequipDelay * 1000.0f);
+      
+  // Clear collision state
+         m_higgsCollisionActive = false;
+        m_wasHiggsCollisionActive = false;
+   m_timeSinceLastCollision = 0.0f;
+     return;
+       }
         }
 
         TESObjectREFR* droppedWeapon = EquipManager::GetSingleton()->GetDroppedWeaponRef(offHandIsLeft);
@@ -1439,7 +1511,7 @@ isLeftGameHand ? "LEFT" : "RIGHT");
        
       if (m_autoEquipTimerRight >= autoEquipGrabbedWeaponDelay)
               {
-    _MESSAGE("VRInputHandler: Auto-equipping grabbed weapon to RIGHT game hand after %.1f sec",
+    _MESSAGE("VRInputHandler: Auto-equiping grabbed weapon to RIGHT game hand after %.1f sec",
     autoEquipGrabbedWeaponDelay);
   
           TESForm* weaponForm = m_autoEquipWeaponRight->baseForm;
@@ -1713,7 +1785,7 @@ m_timeSinceLastShieldCollision += deltaTime;
        {
      m_shieldCollisionActive = false;
        _MESSAGE("VRInputHandler: === %s HAND WEAPON SAFE TO RE-EQUIP ===", weaponHandIsLeft ? "LEFT" : "RIGHT");
-       _MESSAGE("VRInputHandler: Time separated: %.3f sec, Distance: %.2f (threshold: %.2f)", 
+       _MESSAGE("VRInputHandler: Time separated: %.2f sec, Distance: %.2f (threshold: %.2f)", 
  m_timeSinceLastShieldCollision, currentDistance, shieldReequipThreshold);
   
      droppedWeapon = EquipManager::GetSingleton()->GetDroppedWeaponRef(weaponHandIsLeft);
@@ -1763,7 +1835,7 @@ m_timeSinceLastShieldCollision += deltaTime;
 
       m_pendingReequipRight = true;
       m_pendingReequipRightTimer = 0.0f;
-      _MESSAGE("VRInputHandler: Scheduled re-equip for %s hand in %.1f ms", weaponHandIsLeft ? "LEFT" : "RIGHT", shieldReequipDelay * 1000.0f);
+      _MESSAGE("VRInputHandler: Scheduled re-equip for %s hand in %.1f ms", weaponHandIsLeft ? "LEFT" : "RIGHT", shieldReequipDelay *  1000.0f);
   }
         }
     }
@@ -1922,6 +1994,90 @@ return 0.0f;
     void InitializeVRInput()
     {
         VRInputHandler::GetSingleton()->Initialize();
- }
+    }
+
+    // ============================================
+    // Trigger Button Tracking
+    // ============================================
+    
+    // Track trigger state for each hand
+ static bool s_leftTriggerPressed = false;
+  static bool s_rightTriggerPressed = false;
+    static bool s_leftTriggerWasPressed = false;
+    static bool s_rightTriggerWasPressed = false;
+    
+    // Trigger button mask (SteamVR trigger button = button 33)
+    static const uint64_t TRIGGER_BUTTON_MASK = (1ull << 33);
+    
+    // Poll trigger state - call this each frame from OnPrePhysicsStep
+    void PollTriggerState()
+    {
+        BSOpenVR* openVR = (*g_openVR);
+        if (!openVR || !openVR->vrSystem)
+        return;
+        
+        vr_1_0_12::IVRSystem* vrSystem = openVR->vrSystem;
+        
+        // Get controller indices
+        vr_1_0_12::TrackedDeviceIndex_t leftController = vrSystem->GetTrackedDeviceIndexForControllerRole(
+            vr_1_0_12::ETrackedControllerRole::TrackedControllerRole_LeftHand);
+        vr_1_0_12::TrackedDeviceIndex_t rightController = vrSystem->GetTrackedDeviceIndexForControllerRole(
+          vr_1_0_12::ETrackedControllerRole::TrackedControllerRole_RightHand);
+        
+  // Get controller state for left hand
+vr_1_0_12::VRControllerState_t leftState;
+        if (vrSystem->GetControllerState(leftController, &leftState, sizeof(leftState)))
+        {
+            s_leftTriggerWasPressed = s_leftTriggerPressed;
+ s_leftTriggerPressed = (leftState.ulButtonPressed & TRIGGER_BUTTON_MASK) != 0;
+      
+// Log state changes
+            if (s_leftTriggerPressed && !s_leftTriggerWasPressed)
+   {
+                _MESSAGE("VRInputHandler: LEFT TRIGGER PRESSED");
+            }
+       else if (!s_leftTriggerPressed && s_leftTriggerWasPressed)
+  {
+      _MESSAGE("VRInputHandler: LEFT TRIGGER RELEASED");
+            }
+        }
+ 
+     // Get controller state for right hand
+      vr_1_0_12::VRControllerState_t rightState;
+  if (vrSystem->GetControllerState(rightController, &rightState, sizeof(rightState)))
+      {
+     s_rightTriggerWasPressed = s_rightTriggerPressed;
+            s_rightTriggerPressed = (rightState.ulButtonPressed & TRIGGER_BUTTON_MASK) != 0;
+       
+            // Log state changes
+      if (s_rightTriggerPressed && !s_rightTriggerWasPressed)
+            {
+  _MESSAGE("VRInputHandler: RIGHT TRIGGER PRESSED");
+      }
+            else if (!s_rightTriggerPressed && s_rightTriggerWasPressed)
+   {
+            _MESSAGE("VRInputHandler: RIGHT TRIGGER RELEASED");
+     }
+   }
+    }
+    
+    bool VRInputHandler::IsLeftTriggerPressed() { return s_leftTriggerPressed; }
+    bool VRInputHandler::IsRightTriggerPressed() { return s_rightTriggerPressed; }
+    
+    // Check if trigger is pressed for the VR controller corresponding to a game hand
+    bool VRInputHandler::IsTriggerHeldForGameHand(bool isLeftGameHand)
+    {
+        // Convert game hand to VR controller
+    bool isLeftVRController = GameHandToVRController(isLeftGameHand);
+   
+        // Return the trigger state for that VR controller
+  return isLeftVRController ? s_leftTriggerPressed : s_rightTriggerPressed;
+    }
+    
+    void VRInputHandler::RegisterTriggerCallback()
+    {
+     // Trigger polling is now done in OnPrePhysicsStep, no separate registration needed
+      _MESSAGE("VRInputHandler: Trigger button tracking initialized (polled in OnPrePhysicsStep)");
+    }
 }
 

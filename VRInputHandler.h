@@ -62,10 +62,24 @@ return isLeftGameHand ? m_leftHandOnCooldown : m_rightHandOnCooldown;
         
         // Weapon swing tracking (game-registered swings, not VR controller input)
         void OnWeaponSwing(bool isLeftHand, TESForm* weapon);
-        int GetWeaponSwingCount(bool isLeftHand) const { return isLeftHand ? m_leftSwingCount : m_rightSwingCount; }
+   int GetWeaponSwingCount(bool isLeftHand) const { return isLeftHand ? m_leftSwingCount : m_rightSwingCount; }
      
         // Clear all tracking state (call on death, load, etc.)
   void ClearAllState();
+ 
+    // ============================================
+        // Trigger Button Tracking
+      // ============================================
+        
+        // Check if trigger is currently pressed
+        static bool IsLeftTriggerPressed();
+  static bool IsRightTriggerPressed();
+        
+        // Check if trigger is held for the VR controller corresponding to a game hand
+        static bool IsTriggerHeldForGameHand(bool isLeftGameHand);
+  
+        // Register the trigger callback with PapyrusVR
+        static void RegisterTriggerCallback();
    
         // Get the velocity of a grabbed weapon (from geometry tracker)
  float GetGrabbedWeaponVelocity(bool isLeftGameHand) const;
